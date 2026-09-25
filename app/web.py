@@ -33,6 +33,74 @@ def fmt_time(value):
     return value.replace(tzinfo=timezone.utc).astimezone(LOCAL_TZ).strftime("%d.%m.%Y %H:%M") if value else "—"
 
 
+def brief_as_text(attention, team, reviews, ready, shipped, cards, last_sync):
+    def cell(value):
+        return " ".join(str(value or "").split())
+
+    def item_label(item):
+        kind = "PR " if isinstance(item, Pull) else ""
+        return f"{cell(item.repository_name)} {kind}#{item.number} | {cell(item.title)}"
+
+    def section(label, total, shown):
+        return f"{label} ({total} total, {shown} shown)"
+
+    lines = ["BRIEF", f"Last sync: {fmt_time(last_sync) if last_sync else 'pending'}", ""]
+    lines.append(section("NEEDS ME", len(attention), min(len(attention), 4)))
+    for reason, item, why in attention[:4]:
+        lines.append(f"- {cell(reason)} | {item_label(item)} | {cell(why)}")
+    if not attention:
+        lines.append("- None")
+
+    lines.extend(["", "TEAM NOW"])
+    for member in team:
+        person = member["person"]
+        lines.append(
+            f"- {cell(person['name'])} (@{cell(person['github'])}) | "
+            f"Now {len(member['active'])} | Review {len(member['review'])} | "
+            f"Ready next {len(member['ready_next'])} | Assigned backlog {len(member['assigned_backlog'])}"
+        )
+        if member["active"]:
+            lines.append(f"  Now: {item_label(member['active'][0])}")
+    if not team:
+        lines.append("- None")
+
+    lines.extend(["", section("REVIEWS", len(reviews), min(len(reviews), 3))])
+    for pull in reviews[:3]:
+        lines.append(f"- {item_label(pull)} | Opened {fmt_date(pull.created_at)} | "
+                     f"Open {age_days(pull.created_at)}d")
+    if not reviews:
+        lines.append("- None")
+
+    lines.extend(["", section("READY + UNASSIGNED", len(ready), min(len(ready), 4))])
+    for issue in ready[:4]:
+        priority = f" | {cell(issue.priority)}" if issue.priority_state == "known" else (
+            " | Unavailable" if issue.priority_state == "unavailable" else "")
+        lines.append(f"- {item_label(issue)}{priority}")
+    if not ready:
+        lines.append("- None")
+
+    lines.extend(["", section("RECENTLY SHIPPED", len(shipped), min(len(shipped), 3))])
+    for release in shipped[:3]:
+        prerelease = " | Prerelease" if release.prerelease else ""
+        lines.append(f"- {fmt_date(release.published_at)} | {cell(release.repository_name)} | "
+                     f"{cell(release.tag)}{prerelease}")
+    if not shipped:
+        lines.append("- None")
+
+    lines.extend(["", "LATEST RELEASES"])
+    for card in cards:
+        latest = card["latest"]
+        if latest:
+            release = latest[0]
+            lines.append(f"- {cell(card['repo'].name)} | {cell(release.tag)} | "
+                         f"{fmt_date(release.published_at or release.created_at)}")
+        else:
+            lines.append(f"- {cell(card['repo'].name)} | No releases")
+    if not cards:
+        lines.append("- None")
+    return "\n".join(lines) + "\n"
+
+
 def release_window_start(now, period):
     midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
     if period == "today":
@@ -244,9 +312,12 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
         open_issues = [i for i in issues if i.state == "open"]
         open_pulls = [p for p in pulls if p.state == "open"]
         ready = ordered_issues([i for i in open_issues if status(i, "ready") and not i.assignees])
-        return render_template("brief.html", **common(repos, meta), attention=lead_attention(open_issues, open_pulls),
-            team=team_data(open_issues, open_pulls), reviews=[p for p in open_pulls if p.review_state in ("Waiting for Review", "Changes Requested", "Approval before latest commit")],
-            ready=ready, shipped=recent_releases(releases), cards=repo_cards(repos, issues, pulls, releases))
+        view = dict(attention=lead_attention(open_issues, open_pulls), team=team_data(open_issues, open_pulls),
+                    reviews=[p for p in open_pulls if p.review_state in ("Waiting for Review", "Changes Requested", "Approval before latest commit")],
+                    ready=ready, shipped=recent_releases(releases), cards=repo_cards(repos, issues, pulls, releases))
+        shared = common(repos, meta)
+        return render_template("brief.html", **shared, **view,
+                               brief_text=brief_as_text(**view, last_sync=shared["last_sync"]))
 
     @app.get("/now")
     def now_page():

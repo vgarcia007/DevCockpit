@@ -50,6 +50,32 @@ if (themeToggle) {
   });
 }
 
+const briefExportToggle = document.getElementById('brief-export-toggle');
+if (briefExportToggle) {
+  const panel = document.getElementById('brief-export-panel');
+  const field = document.getElementById('brief-export-text');
+  const copyButton = document.getElementById('brief-export-copy');
+  const status = document.getElementById('brief-export-status');
+  briefExportToggle.addEventListener('click', () => {
+    const open = panel.hidden;
+    panel.hidden = !open;
+    briefExportToggle.setAttribute('aria-expanded', String(open));
+    briefExportToggle.querySelector('span').textContent = open ? 'Hide text' : 'Show as text';
+    status.textContent = '';
+    if (open) field.focus();
+  });
+  copyButton.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(field.value);
+      status.textContent = 'Copied to clipboard';
+    } catch (_) {
+      field.focus();
+      field.select();
+      status.textContent = 'Text selected; copy it with your keyboard';
+    }
+  });
+}
+
 const teamSearch = document.getElementById('team-search');
 if (teamSearch) {
   teamSearch.addEventListener('input', () => {

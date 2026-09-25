@@ -10,7 +10,7 @@ from app.github import GitHubCliClient, project_items
 from app.changes import detect_changes
 from app.models import Issue, ObservedChange, Pull, Release, Repository, UserAvatar, make_session
 from app.sync import SyncManager, ci_state, issue_data, issue_field_priority, pull_data, review_state
-from app.web import age_days, create_app, github_project_url, latest_releases, published_releases, release_window_start, workflow_readable
+from app.web import age_days, brief_as_text, create_app, github_project_url, latest_releases, published_releases, release_window_start, workflow_readable
 
 
 CFG = {
@@ -159,6 +159,29 @@ def test_recently_shipped_uses_published_github_releases_for_three_calendar_mont
             release("prerelease", boundary + timedelta(days=2), prerelease=True),
             release("other-repo", boundary + timedelta(days=3), repository="Two")]
     assert [row.tag for row in published_releases(rows, since, "One")] == ["prerelease", "boundary"]
+
+
+def test_brief_text_contains_visible_facts_without_html_or_extra_items():
+    issue = SimpleNamespace(repository_name="One", number=10, title="Fix\nlogin",
+                            priority="Urgent", priority_state="known")
+    pull = Pull(repository_name="One", number=20, title="Login PR",
+                created_at=datetime.now(timezone.utc) - timedelta(days=6))
+    release = SimpleNamespace(repository_name="One", tag="v1", prerelease=False,
+                              published_at=datetime(2026, 9, 24))
+    member = {"person": {"name": "Alice", "github": "alice"}, "active": [issue],
+              "review": [], "ready_next": [], "assigned_backlog": []}
+    cards = [{"repo": SimpleNamespace(name="One"), "latest": [release]}]
+    result = brief_as_text([("URGENT", issue, "GitHub priority Urgent")] * 5,
+                           [member], [pull] * 4, [issue] * 5, [release] * 4, cards, None)
+    assert "NEEDS ME (5 total, 4 shown)" in result
+    assert result.count("GitHub priority Urgent") == 4
+    assert "One #10 | Fix login" in result and "Fix\nlogin" not in result
+    assert "Alice (@alice) | Now 1" in result
+    assert "REVIEWS (4 total, 3 shown)" in result
+    assert "READY + UNASSIGNED (5 total, 4 shown)" in result
+    assert "RECENTLY SHIPPED (4 total, 3 shown)" in result
+    assert "One | v1 | 24.09.2026" in result
+    assert "<a " not in result
 
 
 def test_rest_pagination():
@@ -320,7 +343,10 @@ def test_sync_isolated_repos_cache_rebuild_and_views(tmp_path, monkeypatch):
         assert 'href="/planning"' not in text
         assert "All Ready" in text
         assert "No In Progress issue" not in text
-        assert client.get("/brief").status_code == 200
+        brief = client.get("/brief")
+        assert brief.status_code == 200
+        assert 'id="brief-export-toggle"' in brief.get_data(as_text=True)
+        assert 'id="brief-export-text"' in brief.get_data(as_text=True)
         assert client.get("/team").status_code == 200
         now_page = client.get("/now")
         assert now_page.status_code == 200

@@ -335,6 +335,23 @@ body { font-size:14px; line-height:1.5; background:var(--color-bg); }
 .now-entry-meta { font-size:11px; }
 .cto-section { padding:14px 0; }
 .cto-section-head h2 { font-size:16px; }
+.brief-actions { display:flex; align-items:center; flex-wrap:wrap; justify-content:flex-end; gap:9px 14px; }
+.brief-export-button { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:34px; padding:6px 10px; border:1px solid var(--color-border); border-radius:var(--radius-sm); background:var(--color-surface); color:var(--color-text); font-size:12px; font-weight:690; cursor:pointer; transition:border-color 140ms,background-color 140ms; }
+.brief-export-button:hover { border-color:var(--color-accent); background:var(--color-accent-soft); }
+.brief-export-button:focus-visible { outline:2px solid var(--color-accent); outline-offset:2px; }
+.brief-export-button .icon { width:15px; height:15px; color:var(--color-muted); }
+.brief-export-panel { margin:-4px 0 20px; padding:15px; border:1px solid var(--color-border); border-radius:var(--radius-md); background:var(--color-surface-alt); }
+.brief-export-panel[hidden] { display:none; }
+.brief-export-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; }
+.brief-export-head strong { font-size:13px; }
+.brief-export-panel textarea { display:block; width:100%; min-height:260px; max-height:48vh; padding:12px; border:1px solid var(--color-border); border-radius:var(--radius-sm); background:var(--color-surface); color:var(--color-text); font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace; resize:vertical; white-space:pre-wrap; overflow-wrap:anywhere; }
+.brief-export-panel textarea:focus-visible { outline:2px solid var(--color-accent); outline-offset:1px; }
+.brief-export-status { display:block; min-height:18px; margin-top:5px; color:var(--color-muted); font-size:11px; }
+@media(max-width:680px) {
+  .cto-grid { grid-template-columns:minmax(0,1fr); }
+  .cto-column,.cto-section,.cto-need,.cto-need strong,.cto-need small { min-width:0; }
+  .cto-need small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+}
 .filter-button,.btn,.form-control,.form-select { border-radius:5px; }
 .filter-button { padding:5px 11px; font-size:12px; }
 .form-control,.form-select { font-size:12px; min-height:34px; }
