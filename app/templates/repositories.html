@@ -1,0 +1,22 @@
+{% extends 'base.html' %}
+{% from 'ui.html' import icon %}
+{% block title %}Repositories · Dev-Cockpit{% endblock %}
+{% block workbar_title %}Repositories{% endblock %}
+{% block content %}
+<div class="mode-page repositories-page">
+  <header class="mode-intro"><div class="eyebrow">Across the codebase</div><h1>Repositories</h1><p>Latest releases and work state, with problem signals only when present.</p></header>
+  <div class="repository-list">
+    {% for c in cards %}
+    <div class="repository-line">
+      <a class="repository-line-content" href="{{ url_for('repository_detail', repo=c.repo.name) }}">
+        <div class="repository-line-main"><h2>{{ c.repo.name }}</h2><span class="repository-path">{{ c.repo.full_name }}</span><span class="repository-release">{% if c.latest %}Latest release <strong>{{ c.latest[0].tag }}</strong> · {{ (c.latest[0].published_at or c.latest[0].created_at)|date }}{% else %}No releases{% endif %}</span></div>
+        <div class="repository-line-work">{% if c.workflow_available %}<span><strong{% if not c.counts.backlog %} class="zero-value"{% endif %}>{{ c.counts.backlog }}</strong> Backlog</span><span><strong{% if not c.counts.ready %} class="zero-value"{% endif %}>{{ c.counts.ready }}</strong> Ready</span><span><strong{% if not c.counts.in_progress %} class="zero-value"{% endif %}>{{ c.counts.in_progress }}</strong> In Progress</span><span><strong{% if not c.counts.in_review %} class="zero-value"{% endif %}>{{ c.counts.in_review }}</strong> In Review</span>{% else %}<span>Workflow unavailable</span>{% endif %}</div>
+        <div class="repository-line-pr"><span><strong{% if not c.open_prs %} class="zero-value"{% endif %}>{{ c.open_prs }}</strong> open PR{% if c.open_prs != 1 %}s{% endif %}</span>{% if c.waiting %}<span class="warning-text">{{ c.waiting }} waiting review</span>{% endif %}{% if c.ci_failing %}<span class="danger-text">{{ c.ci_failing }} CI failing</span>{% endif %}{% if c.urgent %}<span class="danger-text">{{ c.urgent }} urgent</span>{% endif %}</div>
+        {{ icon('chevron-right') }}
+      </a>
+      {% if c.project_url %}<a class="repository-project-link" href="{{ c.project_url }}" target="_blank" rel="noopener noreferrer" title="Open GitHub Project #{{ c.repo.project_number }}">Project #{{ c.repo.project_number }} {{ icon('external-link') }}</a>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

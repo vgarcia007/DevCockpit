@@ -1,0 +1,22 @@
+{% from 'ui.html' import icon %}
+{% macro issue_line(issue) %}
+<a class="item-line scan-line" href="{{ issue.url }}" target="_blank" rel="noopener noreferrer" title="{{ issue.title }}">
+  <span class="repo-tag" title="{{ issue.repository_name }}">{{ issue.repository_name }}</span>
+  <span class="item-number">#{{ issue.number }}</span><span class="item-title">{{ issue.title }}</span>
+  {% if issue.priority_state == 'known' %}<span class="priority-label priority-{{ issue.priority|lower }}">{{ issue.priority }}</span>{% elif issue.priority_state == 'unavailable' %}<span class="priority-label is-muted" title="GitHub priority could not be read">Unavailable</span>{% endif %}
+</a>
+{% endmacro %}
+{% macro pull_line(pull) %}
+<a class="item-line scan-line" href="{{ pull.url }}" target="_blank" rel="noopener noreferrer" title="{{ pull.title }}">
+  <span class="repo-tag" title="{{ pull.repository_name }}">{{ pull.repository_name }}</span>
+  <span class="item-number">PR #{{ pull.number }}</span><span class="item-title">{{ pull.title }}</span>
+  <span class="item-age" title="Opened {{ pull.created_at|date }}">{{ pull.created_at|age }}d</span>
+</a>
+{% endmacro %}
+{% macro release_activity(release) %}
+<div class="activity-row">
+  <span class="activity-icon">{{ icon('tag') }}</span>
+  <div class="activity-content"><a href="{{ release.url }}" target="_blank" rel="noopener noreferrer" title="{{ release.name or release.tag }}">{{ release.repository_name }} released {{ release.tag }}</a><span class="activity-meta">GitHub Release{% if release.prerelease %} · Prerelease{% endif %}{% if release.name and release.name != release.tag %} · {{ release.name }}{% endif %}</span></div>
+  <time class="activity-time">{{ release.published_at|date }}</time>
+</div>
+{% endmacro %}

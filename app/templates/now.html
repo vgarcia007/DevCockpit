@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+{% from 'ui.html' import icon, avatar %}
+{% block title %}Now · Dev-Cockpit{% endblock %}
+{% block workbar_title %}Now{% endblock %}
+{% block content %}
+<div class="mode-page now-page">
+  <header class="mode-intro now-intro"><div><div class="eyebrow">Current work</div><h1>Now <span class="now-total">{{ active_count }}</span></h1><p>Open issues marked In Progress in their GitHub Projects.</p></div><span class="now-scope">{{ sections|length }} repositor{% if sections|length == 1 %}y{% else %}ies{% endif %} with active work</span></header>
+  {% if workflow_coverage < workflow_total %}<p class="app-notice is-warning">Workflow data is available for {{ workflow_coverage }} of {{ workflow_total }} repositories. Issues from unreadable Projects cannot be included.</p>{% endif %}
+  {% for section in sections %}
+  <section class="now-repository" aria-labelledby="now-repo-{{ loop.index }}">
+    <div class="now-repository-heading"><div><h2 id="now-repo-{{ loop.index }}"><a href="{{ url_for('repository_detail', repo=section.repo.name) }}">{{ section.repo.name }}</a></h2><span>{{ section.repo.full_name }}</span></div><strong>{{ section.issues|length }} In Progress</strong></div>
+    <div class="now-list">{% for issue in section.issues %}<article class="now-entry"><span class="now-entry-mark">{{ icon('play') }}</span><div class="now-entry-content"><a class="now-entry-link" href="{{ issue.url }}" target="_blank" rel="noopener noreferrer" title="{{ issue.title }}"><span class="item-number">#{{ issue.number }}</span><span class="now-entry-title">{{ issue.title }}</span>{{ icon('arrow-up-right') }}</a><div class="now-entry-meta"><span class="now-assignees">{% if issue.assignees %}{% for login in issue.assignees %}{{ avatar(login, avatars, 'avatar-xs') }}<span>{{ login }}</span>{% endfor %}{% else %}<span>Unassigned</span>{% endif %}</span><time title="Last updated on GitHub">Updated {{ issue.updated_at|date }}</time>{% for pull in issue.related_pulls if pull.state == 'open' %}<a class="now-related-pr" href="{{ pull.url }}" target="_blank" rel="noopener noreferrer">Related PR #{{ pull.number }} {{ icon('arrow-up-right') }}</a>{% endfor %}</div></div>{% if issue.priority_state == 'known' %}<span class="priority-label priority-{{ issue.priority|lower }}">{{ issue.priority }}</span>{% elif issue.priority_state == 'unavailable' %}<span class="priority-label is-muted" title="Priority could not be read from GitHub">Priority unavailable</span>{% endif %}</article>{% endfor %}</div>
+  </section>
+  {% else %}<p class="now-empty">No open issue currently has the GitHub Project status In Progress.</p>{% endfor %}
+</div>
+{% endblock %}

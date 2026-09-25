@@ -1,0 +1,6 @@
+{% extends 'base.html' %}{% from 'ui.html' import icon %}
+{% block title %}Board · Dev-Cockpit{% endblock %}{% block workbar_title %}Board{% endblock %}{% block content %}
+<div class="page-heading"><div><h1 class="page-title">Board</h1><p>Read-only view of GitHub Project status.</p></div></div>
+<form data-auto-filter class="filter-row filter-surface compact-filter" method="get"><select name="repo" class="form-select form-select-sm" aria-label="Repository"><option value="">All repositories</option>{% for r in repositories %}<option value="{{ r.name }}" {% if request.args.get('repo') == r.name %}selected{% endif %}>{{ r.name }}</option>{% endfor %}</select></form>
+<div class="board-columns">{% for key,label,items in columns %}<section class="board-column"><h2>{{ label }} <span class="section-count">{{ items|length }}</span></h2>{% for i in items %}<a class="board-item" href="{{ i.url }}" target="_blank" rel="noopener noreferrer"><span class="repo-tag">{{ i.repository_name }}</span><div class="board-item-title" title="{{ i.title }}">#{{ i.number }} {{ i.title }}</div><div class="board-item-meta">{{ i|priority }} · {{ i.assignees|join(', ') or 'Unassigned' }}</div></a>{% endfor %}</section>{% endfor %}</div><p class="data-note mt-3">Issues without a readable Project status appear in the Issues list.</p>
+{% endblock %}

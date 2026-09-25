@@ -1,0 +1,30 @@
+github:
+  organization: example-org
+  username: your-github-login
+
+repositories:
+  - name: Example Service
+    url: /example-org/example-service
+    project_number: null
+    # Set project_number to the repository's GitHub Project v2 number when available.
+    # For a user-owned Project, also set project_owner and project_owner_type: user.
+
+workflow:
+  status_field: Status
+  values:
+    backlog: Backlog
+    ready: Ready
+    in_progress: In Progress
+    in_review: In Review
+    done: Done
+
+priority:
+  source: project # Use issue_field for an organization Issue Field instead.
+  field: Priority
+
+team:
+  - github: your-github-login
+    name: Your Name
+
+sync:
+  interval_seconds: 60

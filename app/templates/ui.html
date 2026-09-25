@@ -1,0 +1,7 @@
+{% macro icon(name, class_name='') -%}
+<svg class="icon {{ class_name }}" aria-hidden="true"><use href="{{ url_for('static', filename='lucide.svg') }}#{{ name }}"></use></svg>
+{%- endmacro %}
+
+{% macro avatar(login, avatars, size='') -%}
+{% if login and not login.startswith('@') %}{% if login|lower in avatars %}<img class="avatar {{ size }}" src="{{ avatars[login|lower] }}" alt="" loading="lazy" referrerpolicy="no-referrer">{% elif login.endswith('[bot]') %}<span class="avatar avatar-fallback {{ size }}" aria-hidden="true">B</span>{% else %}<img class="avatar {{ size }}" src="https://github.com/{{ login }}.png?size=80" alt="" loading="lazy" referrerpolicy="no-referrer">{% endif %}{% endif %}
+{%- endmacro %}

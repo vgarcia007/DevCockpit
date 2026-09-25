@@ -1,0 +1,6 @@
+{% extends 'base.html' %}{% from 'macros.html' import issue_line, pull_line %}{% from 'ui.html' import icon %}
+{% block title %}Search · Dev-Cockpit{% endblock %}{% block workbar_title %}Search{% endblock %}{% block content %}
+<div class="page-heading"><div><h1 class="page-title">Search</h1><p>Find issues and pull requests across repositories.</p></div></div>
+<form method="get" class="search-page-form"><input class="form-control" name="q" value="{{ q }}" placeholder="Repository, number, title, person or label" aria-label="Search"><button class="btn btn-primary">{{ icon('search') }} Search</button></form>
+<div class="row g-3"><div class="col-xl-6"><section class="panel"><div class="section-head"><div class="section-title">{{ icon('list-checks') }}<h2>Issues</h2><span class="section-count">{{ issues|length }}</span></div></div>{% for i in issues %}{{ issue_line(i) }}{% else %}<p class="quiet-empty">No matches</p>{% endfor %}</section></div><div class="col-xl-6"><section class="panel"><div class="section-head"><div class="section-title">{{ icon('git-pull-request') }}<h2>Pull Requests</h2><span class="section-count">{{ pulls|length }}</span></div></div>{% for p in pulls %}{{ pull_line(p) }}{% else %}<p class="quiet-empty">No matches</p>{% endfor %}</section></div></div>
+{% endblock %}
