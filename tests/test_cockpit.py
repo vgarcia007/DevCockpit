@@ -193,6 +193,27 @@ def test_brief_prompt_is_read_from_file_each_time(tmp_path):
     assert brief_with_prompt("BRIEF\n", prompt).startswith("Updated instruction\n\nBRIEF")
 
 
+def test_team_page_orders_people_by_display_name(tmp_path):
+    config = tmp_path / "config.yml"
+    config.write_text("""repositories:
+  - name: One
+    url: /example/one
+team:
+  - github: zoe
+    name: Zoe
+  - github: bob
+    name: Bob
+  - github: anne
+    name: Änne
+  - github: alice
+    name: Alice
+""", encoding="utf-8")
+    app = create_app(config_path=config, database_path=tmp_path / "team.sqlite", auto_sync=False)
+    page = app.test_client().get("/team").get_data(as_text=True)
+    names = [page.index(f"<h2>{name}</h2>") for name in ("Alice", "Änne", "Bob", "Zoe")]
+    assert names == sorted(names)
+
+
 def test_rest_pagination():
     calls = []
     def runner(args, **kwargs):

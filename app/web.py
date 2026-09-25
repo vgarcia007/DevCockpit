@@ -1,4 +1,5 @@
 import logging
+import unicodedata
 from calendar import monthrange
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -104,6 +105,12 @@ def brief_as_text(attention, team, reviews, ready, shipped, cards, last_sync):
 def brief_with_prompt(brief_text, prompt_path=None):
     path = Path(prompt_path or ROOT / "brief_prompt.txt")
     return path.read_text(encoding="utf-8").rstrip() + "\n\n" + brief_text
+
+
+def team_sort_key(person):
+    name = unicodedata.normalize("NFKD", (person.get("name") or person["github"]).casefold())
+    return ("".join(char for char in name if not unicodedata.combining(char)),
+            person["github"].casefold())
 
 
 def release_window_start(now, period):
@@ -218,7 +225,7 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
 
     def team_data(issues, pulls):
         result = []
-        for person in cfg["team"]:
+        for person in sorted(cfg["team"], key=team_sort_key):
             user = person["github"].lower()
             assigned = [i for i in issues if i.state == "open" and user in [a.lower() for a in i.assignees]]
             result.append({"person": person,
