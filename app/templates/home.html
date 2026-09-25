@@ -9,7 +9,7 @@
 {% macro person_issue(item) %}<a href="{{ item.url }}" target="_blank" rel="noopener noreferrer" title="{{ item.title }}"><span class="repo-tag">{{ item.repository_name }}</span><span class="item-number">#{{ item.number }}</span><span class="person-issue-title">{{ item.title }}</span></a>{% endmacro %}
 {% block content %}
 <div class="briefing-page">
-  <header class="briefing-intro"><div><div class="eyebrow"><span class="eyebrow-mark"></span> Command center</div><h1>Briefing<span class="briefing-title-mark">/</span></h1><p>Your team's work, decisions and next moves in one place.</p></div><a class="story-link briefing-present" href="{{ url_for('brief') }}">{{ icon('external-link') }} Conversation view {{ icon('arrow-up-right') }}</a></header>
+  <header class="briefing-intro"><div><div class="eyebrow"><span class="eyebrow-mark"></span> Command center</div><h1>Briefing</h1><p>Your team's work, decisions and next moves in one place.</p></div><a class="story-link briefing-present" href="{{ url_for('brief') }}">{{ icon('external-link') }} Conversation view {{ icon('arrow-up-right') }}</a></header>
 
   <section class="story-section visit-section" aria-labelledby="visit-heading">
     <div class="story-heading"><span class="module-icon">{{ icon('activity') }}</span><div class="story-heading-copy"><h2 id="visit-heading">Since your last visit <span class="story-count" id="visit-count">—</span></h2><p id="visit-intro">Recent changes observed during GitHub sync.</p></div></div>

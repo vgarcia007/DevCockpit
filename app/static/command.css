@@ -140,7 +140,6 @@ body { font-size:14px; line-height:1.5; background:var(--color-bg); }
 .eyebrow-mark { width:6px; height:6px; background:var(--color-accent); transform:rotate(45deg); }
 .briefing-intro,.mode-intro { margin-bottom:31px; }
 .briefing-intro h1,.mode-intro h1,.cto-intro h1 { margin:8px 0 5px; color:var(--color-text); font-size:36px; line-height:1.12; font-weight:740; letter-spacing:-.05em; }
-.briefing-title-mark { margin-left:2px; color:var(--color-accent); }
 .briefing-intro p,.mode-intro p,.cto-intro p { color:var(--color-muted); font-size:14px; }
 .story-link { gap:5px; padding:5px 1px; margin:0 0 0 auto; color:var(--color-accent); font-size:12px; font-weight:700; }
 .story-link .icon { width:14px; height:14px; }
