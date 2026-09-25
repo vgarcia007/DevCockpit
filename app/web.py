@@ -101,6 +101,11 @@ def brief_as_text(attention, team, reviews, ready, shipped, cards, last_sync):
     return "\n".join(lines) + "\n"
 
 
+def brief_with_prompt(brief_text, prompt_path=None):
+    path = Path(prompt_path or ROOT / "brief_prompt.txt")
+    return path.read_text(encoding="utf-8").rstrip() + "\n\n" + brief_text
+
+
 def release_window_start(now, period):
     midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
     if period == "today":
@@ -317,7 +322,8 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
                     ready=ready, shipped=recent_releases(releases), cards=repo_cards(repos, issues, pulls, releases))
         shared = common(repos, meta)
         return render_template("brief.html", **shared, **view,
-                               brief_text=brief_as_text(**view, last_sync=shared["last_sync"]))
+                               brief_export_text=brief_with_prompt(
+                                   brief_as_text(**view, last_sync=shared["last_sync"])))
 
     @app.get("/now")
     def now_page():

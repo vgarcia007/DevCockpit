@@ -10,7 +10,7 @@ from app.github import GitHubCliClient, project_items
 from app.changes import detect_changes
 from app.models import Issue, ObservedChange, Pull, Release, Repository, UserAvatar, make_session
 from app.sync import SyncManager, ci_state, issue_data, issue_field_priority, pull_data, review_state
-from app.web import age_days, brief_as_text, create_app, github_project_url, latest_releases, published_releases, release_window_start, workflow_readable
+from app.web import age_days, brief_as_text, brief_with_prompt, create_app, github_project_url, latest_releases, published_releases, release_window_start, workflow_readable
 
 
 CFG = {
@@ -184,6 +184,15 @@ def test_brief_text_contains_visible_facts_without_html_or_extra_items():
     assert "<a " not in result
 
 
+def test_brief_prompt_is_read_from_file_each_time(tmp_path):
+    prompt = tmp_path / "brief_prompt.txt"
+    prompt.write_text("First instruction\n\nHere is the data:  \n", encoding="utf-8")
+    assert brief_with_prompt("BRIEF\n- One #10\n", prompt) == (
+        "First instruction\n\nHere is the data:\n\nBRIEF\n- One #10\n")
+    prompt.write_text("Updated instruction", encoding="utf-8")
+    assert brief_with_prompt("BRIEF\n", prompt).startswith("Updated instruction\n\nBRIEF")
+
+
 def test_rest_pagination():
     calls = []
     def runner(args, **kwargs):
@@ -345,8 +354,10 @@ def test_sync_isolated_repos_cache_rebuild_and_views(tmp_path, monkeypatch):
         assert "No In Progress issue" not in text
         brief = client.get("/brief")
         assert brief.status_code == 200
-        assert 'id="brief-export-toggle"' in brief.get_data(as_text=True)
-        assert 'id="brief-export-text"' in brief.get_data(as_text=True)
+        brief_html = brief.get_data(as_text=True)
+        assert 'id="brief-copy-prompt"' in brief_html
+        assert 'id="brief-export-text"' in brief_html
+        assert brief_html.index("Erstelle aus dem folgenden technischen Arbeitsstand") < brief_html.index("Hier sind die Rohdaten:") < brief_html.index("BRIEF\n")
         assert client.get("/team").status_code == 200
         now_page = client.get("/now")
         assert now_page.status_code == 200

@@ -90,7 +90,7 @@ DevCockpit does not change CLI authentication or request write permissions. GitH
 ## Views
 
 - **Briefing** (`/`): changes since the previous browser visit, **Needs me**, team work, Ready issues, recent GitHub Releases, and repository state.
-- **Brief** (`/brief`): compact overview for a quick conversation. **Show as text** opens the same visible facts as selectable plain text; **Copy text** puts them on the clipboard for manual use elsewhere.
+- **Brief** (`/brief`): compact overview for a quick conversation. **Copy as prompt** copies the configured prompt followed by the visible Brief facts as plain text. The copied content remains selectable on the page.
 - **Now** (`/now`): open issues explicitly marked In Progress in their GitHub Project.
 - **Team** (`/team`): each person's Now, Review, Ready next, Assigned Backlog, and open PRs.
 - **Issues** (`/issues`), **Pull Requests** (`/pulls`), and **Releases** (`/releases`): searchable and filterable lists. Filters apply when selections change or typing pauses.
@@ -103,6 +103,8 @@ DevCockpit does not change CLI authentication or request write permissions. GitH
 **Recently shipped** shows published GitHub Releases only, by default going back three calendar months. Drafts are excluded and prereleases are marked. Merged PRs are not counted as releases.
 
 **Since your last visit** compares browser visits with changes observed between successful syncs. The visit timestamp is kept in that browser; observations are retained in SQLite for 30 days. It cannot reconstruct changes that appeared and disappeared between syncs.
+
+To change the text prepended by **Copy as prompt**, edit [`brief_prompt.txt`](brief_prompt.txt). The file is read when `/brief` is loaded, so refresh the page after editing it. DevCockpit only copies the prompt and data to your clipboard; it does not call an LLM or send the content anywhere.
 
 ## Tests
 

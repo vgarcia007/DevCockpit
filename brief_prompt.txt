@@ -1,0 +1,76 @@
+Erstelle aus dem folgenden technischen Arbeitsstand ein kurzes Statusupdate für die technische Leitung bzw. den CTO.
+
+Ziel:
+Die Empfänger sollen in wenigen Absätzen schnell erkennen können:
+
+Was wurde zuletzt ausgeliefert?
+
+Welche wichtigen oder kritischen Themen gibt es aktuell?
+
+Woran arbeitet das Team gerade?
+
+Wo gibt es Engpässe, Rückstau oder offene Themen?
+
+Was ist aus Management-Sicht relevant?
+
+Wichtig für die Aufbereitung:
+
+Schreibe kompakt, sachlich und professionell, aber nicht steif.
+
+Vermeide Marketing-Sprache und künstlich aufgeblähte Management-Begriffe.
+
+Fasse die Daten sinnvoll zusammen, statt sie nur zu wiederholen.
+
+Ticketnummern dürfen genannt werden, wenn sie bei der Einordnung helfen.
+
+Hebe High-Priority-Bugs, Blocker und Themen mit möglichem Einfluss auf Betrieb oder Kunden hervor.
+
+Erwähne aktuelle Releases kurz.
+
+Ältere Releases nur dann aufnehmen, wenn sie für den aktuellen Status relevant sind.
+
+Review-Rückstau, Ready-Tickets und unassigned Tickets nur dann erwähnen, wenn daraus eine relevante Aussage entsteht.
+
+Routine-Themen wie Dependency-Updates nicht unnötig hervorheben.
+
+TEAM NOW ist besonders wichtig:
+Erstelle einen eigenen kurzen Abschnitt dazu, woran die einzelnen Teammitglieder aktuell arbeiten.
+
+Dabei gilt:
+Die gelieferten Daten bilden möglicherweise nicht die gesamte Arbeit des Teams ab.
+
+Wenn bei einer Person kein aktuelles Thema erkennbar ist, darf daraus NICHT geschlossen werden, dass die Person nichts zu tun hat.
+
+Stattdessen soll eine gut sichtbare Platzhalterzeile erzeugt werden, zum Beispiel:
+
+[Person]: [manuell ergänzen – interne Aufgaben / Übungen / sonstige Themen]
+
+Auch bei anderen Personen darf ein Platzhalter ergänzt werden, wenn aus den Daten nicht eindeutig hervorgeht, was aktuell ihr Hauptthema ist.
+
+Die Teamübersicht soll bewusst leicht manuell editierbar sein.
+
+Bevorzugte Struktur:
+
+Hallo,
+
+kurzes Statusupdate aus der Entwicklung:
+
+[Kurzer Absatz zu Releases und Fortschritt]
+
+[Kurzer Absatz zu wichtigen Bugs, Risiken oder priorisierten Themen]
+
+Im Team sieht es aktuell so aus:
+
+[Person]: [aktueller Schwerpunkt]
+
+[Person]: [aktueller Schwerpunkt]
+
+[Person]: [manuell ergänzen]
+
+[Kurzer Absatz zu Review-Rückstau, offenen Ready-Themen oder sonstigen Auffälligkeiten]
+
+Viele Grüße
+
+Das Ergebnis soll ungefähr 150–250 Wörter lang sein und direkt als E-Mail verwendet werden können.
+
+Hier sind die Rohdaten:

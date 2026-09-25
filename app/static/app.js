@@ -50,29 +50,28 @@ if (themeToggle) {
   });
 }
 
-const briefExportToggle = document.getElementById('brief-export-toggle');
-if (briefExportToggle) {
+const briefCopyPrompt = document.getElementById('brief-copy-prompt');
+if (briefCopyPrompt) {
   const panel = document.getElementById('brief-export-panel');
   const field = document.getElementById('brief-export-text');
-  const copyButton = document.getElementById('brief-export-copy');
+  const hideButton = document.getElementById('brief-export-hide');
   const status = document.getElementById('brief-export-status');
-  briefExportToggle.addEventListener('click', () => {
-    const open = panel.hidden;
-    panel.hidden = !open;
-    briefExportToggle.setAttribute('aria-expanded', String(open));
-    briefExportToggle.querySelector('span').textContent = open ? 'Hide text' : 'Show as text';
-    status.textContent = '';
-    if (open) field.focus();
-  });
-  copyButton.addEventListener('click', async () => {
+  briefCopyPrompt.addEventListener('click', async () => {
+    panel.hidden = false;
+    briefCopyPrompt.setAttribute('aria-expanded', 'true');
     try {
       await navigator.clipboard.writeText(field.value);
-      status.textContent = 'Copied to clipboard';
+      status.textContent = 'Prompt and brief data copied to clipboard';
     } catch (_) {
       field.focus();
       field.select();
       status.textContent = 'Text selected; copy it with your keyboard';
     }
+  });
+  hideButton.addEventListener('click', () => {
+    panel.hidden = true;
+    briefCopyPrompt.setAttribute('aria-expanded', 'false');
+    briefCopyPrompt.focus();
   });
 }
 
