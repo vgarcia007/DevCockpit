@@ -90,7 +90,7 @@ DevCockpit does not change CLI authentication or request write permissions. GitH
 ## Views
 
 - **Briefing** (`/`): changes since the previous browser visit, **Needs me**, team work, Ready issues, recent GitHub Releases, and repository state.
-- **Brief** (`/brief`): compact overview for a quick conversation. **Copy as prompt** copies the configured prompt followed by the visible Brief facts as plain text. The copied content remains selectable on the page.
+- **Brief** (`/brief`): compact overview for a quick conversation. **Copy as prompt** immediately copies the configured prompt followed by the visible Brief facts as plain text; no text panel opens.
 - **Now** (`/now`): open issues explicitly marked In Progress in their GitHub Project.
 - **Team** (`/team`): each person's Now, Review, Ready next, Assigned Backlog, and open PRs.
 - **Issues** (`/issues`), **Pull Requests** (`/pulls`), and **Releases** (`/releases`): searchable and filterable lists. Filters apply when selections change or typing pauses.

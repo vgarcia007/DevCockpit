@@ -52,25 +52,35 @@ if (themeToggle) {
 
 const briefCopyPrompt = document.getElementById('brief-copy-prompt');
 if (briefCopyPrompt) {
-  const panel = document.getElementById('brief-export-panel');
   const field = document.getElementById('brief-export-text');
-  const hideButton = document.getElementById('brief-export-hide');
-  const status = document.getElementById('brief-export-status');
-  briefCopyPrompt.addEventListener('click', async () => {
-    panel.hidden = false;
-    briefCopyPrompt.setAttribute('aria-expanded', 'true');
+  const status = document.getElementById('brief-copy-status');
+  const fallbackCopy = value => {
+    const scratch = document.createElement('textarea');
+    scratch.value = value;
+    scratch.readOnly = true;
+    scratch.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0';
+    document.body.appendChild(scratch);
+    scratch.focus();
+    scratch.select();
     try {
-      await navigator.clipboard.writeText(field.value);
-      status.textContent = 'Prompt and brief data copied to clipboard';
-    } catch (_) {
-      field.focus();
-      field.select();
-      status.textContent = 'Text selected; copy it with your keyboard';
+      return document.execCommand('copy');
+    } finally {
+      scratch.remove();
     }
-  });
-  hideButton.addEventListener('click', () => {
-    panel.hidden = true;
-    briefCopyPrompt.setAttribute('aria-expanded', 'false');
+  };
+  briefCopyPrompt.addEventListener('click', async () => {
+    let copied = false;
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(field.value);
+        copied = true;
+      } catch (_) {}
+    }
+    if (!copied) {
+      try { copied = fallbackCopy(field.value); } catch (_) {}
+    }
+    status.textContent = copied ? 'Copied' : 'Copy blocked by browser';
+    status.classList.toggle('is-error', !copied);
     briefCopyPrompt.focus();
   });
 }

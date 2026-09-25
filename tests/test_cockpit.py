@@ -356,7 +356,8 @@ def test_sync_isolated_repos_cache_rebuild_and_views(tmp_path, monkeypatch):
         assert brief.status_code == 200
         brief_html = brief.get_data(as_text=True)
         assert 'id="brief-copy-prompt"' in brief_html
-        assert 'id="brief-export-text"' in brief_html
+        assert 'id="brief-export-text" hidden' in brief_html
+        assert 'id="brief-export-panel"' not in brief_html
         assert brief_html.index("Erstelle aus dem folgenden technischen Arbeitsstand") < brief_html.index("Hier sind die Rohdaten:") < brief_html.index("BRIEF\n")
         assert client.get("/team").status_code == 200
         now_page = client.get("/now")
