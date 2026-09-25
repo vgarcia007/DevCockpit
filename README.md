@@ -32,23 +32,50 @@ To rebuild the cache from GitHub, stop the app, remove `instance/cockpit.sqlite`
 
 ## Configure repositories and Projects
 
-`config.yml` is your private local configuration and is ignored by Git. Start from [`config.example.yml`](config.example.yml). The example values are placeholders and must be replaced before useful data can sync.
+`config.yml` is your private local configuration and is ignored by Git. Start from [`config.example.yml`](config.example.yml), then replace every example owner, repository path, and GitHub login with your own values. The example repository paths are placeholders, not working demo data. YAML indentation matters: use spaces, not tabs.
 
 | Setting | Meaning |
 | --- | --- |
-| `github.organization` | Default owner for organization Projects. |
-| `github.username` | Your GitHub login for the **My Issues** and **My Pull Requests** shortcuts. |
+| `github.organization` | Default owner for organization Projects; it does not limit which repositories can be listed. |
+| `github.username` | Your GitHub login for the **My Issues** and **My Pull Requests** shortcuts. This is separate from the team list. |
 | `repositories[].name` | Display name, unique within DevCockpit. |
 | `repositories[].url` | Repository path in `/owner/repo` form. |
-| `repositories[].project_number` | GitHub Project v2 number for that repository, or `null` when none is used. Different repositories may use different Projects. |
+| `repositories[].project_number` | Number in the GitHub Project v2 URL for that repository, or `null` when none is used. Different repositories may use different Projects. |
 | `repositories[].project_owner` | Optional owner override for a Project. |
 | `repositories[].project_owner_type` | Set to `user` for a user-owned Project; organization is the default. |
-| `team[].github` / `team[].name` | GitHub login and display name for a person shown in Team and Brief. Other contributors still appear on issues and PRs. |
+| `team[].github` / `team[].name` | Exact GitHub login and a display name for a person shown in Team and Brief. Other contributors still appear on issues and PRs. |
 | `sync.interval_seconds` | Automatic sync interval; minimum 10 seconds. |
 
-The Project's status field name and exact option labels belong in `workflow.status_field` and `workflow.values`. The expected logical stages are Backlog, Ready, In Progress, In Review, and Done; configure the actual spelling used by your Projects. **Ready and In Progress are never inferred from assignees, activity, or PRs.** An issue outside its configured Project is shown as **Not in project**. A Project item without a status is shown as **No status**. An unreadable Project or field is shown as **Unavailable**.
+### Repositories and Project ownership
+
+Each entry in `repositories` is synchronized independently. `name` is the label shown in the UI; `url` identifies the actual GitHub repository. Find `project_number` at the end of a Project URL such as `https://github.com/orgs/example-org/projects/7` (number `7`). For a Project owned by a user, also set `project_owner` to that user's login and `project_owner_type: user`. Without those overrides, DevCockpit looks for an organization Project under `github.organization` (or the repository owner if no organization is configured).
+
+Use `project_number: null` for a repository without a Project. Its issues, PRs, checks, and releases still sync, but workflow status is unavailable. Adding or changing repositories and Projects requires restarting `./start.sh`; **Sync now** refreshes data using the configuration already loaded by the running process.
+
+### Workflow mapping
+
+The `workflow` block tells DevCockpit **which GitHub Project field to read** and **how its option names map to the five stages shown in the UI**. It does not create those options or change any Project item.
+
+```yaml
+workflow:
+  status_field: Status
+  values:
+    backlog: Backlog
+    ready: Ready
+    in_progress: In Progress
+    in_review: In Review
+    done: Done
+```
+
+`status_field` must match the name of the Project's single-select status field. The keys under `values` are DevCockpit's fixed stage identifiers; their values are the **exact, case-sensitive option names in GitHub**. For example, if your Project option says `In progress`, set `in_progress: In progress`. All configured Projects share this one mapping, so their status field and option names need to agree. If they differ, align the GitHub Project options before expecting one combined workflow view.
+
+Only GitHub's Project status puts an issue in Backlog, Ready, In Progress, In Review, or Done. Assigning someone to an issue does **not** mark it In Progress; opening a PR does **not** mark it In Review. Backlog becomes Ready only when someone changes the Project status in GitHub. An issue outside its configured Project is shown as **Not in project**. A Project item without a status is shown as **No status**. An unreadable Project or field is shown as **Unavailable**, never silently treated as Backlog.
+
+### Priority and team
 
 Set `priority.source` to `project` to read the named Project field, or `issue_field` to read an organization Issue Field. `priority.field` is the exact GitHub field name. DevCockpit never combines those sources or substitutes a local priority. Issues and PRs still sync when a repository has no Project; workflow information is then unavailable. Repository overview pages provide direct links to configured Projects.
+
+Add one `team` entry per person whose work you want in the Team and Brief views. `github` must be the exact GitHub login used as an issue assignee or PR author; `name` is only the display label. The example includes three placeholder members. People omitted from `team` still appear on their issues and PRs, but do not get a person section. Duplicate logins are collapsed. `github.username` above controls only the personal quick filters; add yourself to `team` as well if you want your own person section.
 
 ## GitHub access
 

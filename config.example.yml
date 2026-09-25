@@ -1,16 +1,26 @@
 github:
+  # Default owner of organization Projects, not a repository filter.
   organization: example-org
+  # Used by the "My Issues" and "My Pull Requests" shortcuts.
   username: your-github-login
 
 repositories:
   - name: Example Service
     url: /example-org/example-service
+    # Replace null with this repository's Project v2 number to enable workflow data.
     project_number: null
-    # Set project_number to the repository's GitHub Project v2 number when available.
-    # For a user-owned Project, also set project_owner and project_owner_type: user.
+  - name: Example API
+    url: /example-org/example-api
+    project_number: null
+    # Different repositories may use different Projects.
+    # For a user-owned Project, set project_owner and project_owner_type: user.
 
 workflow:
+  # The name of the single-select field in each configured GitHub Project v2.
   status_field: Status
+  # Left: DevCockpit stage. Right: exact option name in your GitHub Projects.
+  # This one mapping applies to all configured Projects; names are case-sensitive.
+  # These values are read from GitHub, never assigned or inferred locally.
   values:
     backlog: Backlog
     ready: Ready
@@ -19,12 +29,19 @@ workflow:
     done: Done
 
 priority:
+  # Choose one GitHub source; values from the two sources are never mixed.
   source: project # Use issue_field for an organization Issue Field instead.
   field: Priority
 
 team:
+  # List only people you want in Team and Brief; use their exact GitHub logins.
+  # Assignees outside this list still appear on issues and pull requests.
   - github: your-github-login
     name: Your Name
+  - github: teammate-one-login
+    name: Teammate One
+  - github: teammate-two-login
+    name: Teammate Two
 
 sync:
   interval_seconds: 60
