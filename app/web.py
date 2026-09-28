@@ -1,13 +1,13 @@
 import logging
 import unicodedata
-from calendar import monthrange
+from calendar import month_abbr, monthrange
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from flask import Flask, abort, redirect, render_template, request, url_for, jsonify
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select
 from .config import ROOT, load_config
-from .models import Issue, ObservedChange, Pull, Release, Repository, SyncMeta, UserAvatar, make_session
+from .models import ExternalTeamIssue, ExternalTeamSync, Issue, ObservedChange, Pull, Release, Repository, SyncMeta, UserAvatar, make_session
 from .sync import SyncManager
 
 LOG = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ def brief_as_text(attention, team, reviews, ready, shipped, cards, last_sync):
         return f"{label} ({total} total, {shown} shown)"
 
     lines = ["BRIEF", f"Last sync: {fmt_time(last_sync) if last_sync else 'pending'}", ""]
-    lines.append(section("NEEDS ME", len(attention), min(len(attention), 4)))
+    lines.append(section("NEED ATTENTION", len(attention), min(len(attention), 4)))
     for reason, item, why in attention[:4]:
         lines.append(f"- {cell(reason)} | {item_label(item)} | {cell(why)}")
     if not attention:
@@ -157,6 +157,41 @@ def latest_releases(releases, repository):
     return sorted(items, key=lambda r: r.published_at or r.created_at, reverse=True)[:2]
 
 
+def release_timeline(releases):
+    """Position published releases on one calendar-scaled, collision-free track."""
+    published = sorted((r for r in releases if r.published_at and not r.draft),
+                       key=lambda r: (r.published_at, r.github_id))
+    if not published:
+        return {"nodes": [], "ticks": [], "width": 0, "height": 0}
+
+    dates = [r.published_at.replace(tzinfo=timezone.utc).astimezone(LOCAL_TZ) for r in published]
+    first_month = dates[0].year * 12 + dates[0].month - 1
+    last_month = dates[-1].year * 12 + dates[-1].month - 1
+    month_width = 112
+    ticks = []
+    for month_index in range(first_month, last_month + 1):
+        year, zero_month = divmod(month_index, 12)
+        ticks.append({"left": 28 + (month_index - first_month) * month_width,
+                      "label": f"{month_abbr[zero_month + 1]} {year}" if zero_month == 0 or month_index == first_month
+                      else month_abbr[zero_month + 1]})
+
+    row_ends = []
+    nodes = []
+    for release, when in zip(published, dates):
+        month_index = when.year * 12 + when.month - 1
+        fraction = ((when.day - 1) + (when.hour * 3600 + when.minute * 60 + when.second) / 86400) / monthrange(when.year, when.month)[1]
+        left = round(28 + (month_index - first_month + fraction) * month_width, 2)
+        row = next((index for index, end in enumerate(row_ends) if left >= end), len(row_ends))
+        if row == len(row_ends):
+            row_ends.append(0)
+        row_ends[row] = left + 150
+        nodes.append({"release": release, "left": left, "top": 46 + row * 48})
+
+    return {"nodes": nodes, "ticks": ticks,
+            "width": 28 + (last_month - first_month + 1) * month_width + 150,
+            "height": 100 + len(row_ends) * 48}
+
+
 def workflow_readable(repo):
     return repo.project_state == "available" and "Project status field is missing" not in (repo.error or "")
 
@@ -225,6 +260,10 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
 
     def team_data(issues, pulls):
         result = []
+        with sessions() as session:
+            outside = session.scalars(select(ExternalTeamIssue).order_by(ExternalTeamIssue.updated_at.desc())).all()
+            outside_state = {state.login: state for state in session.scalars(select(ExternalTeamSync)).all()}
+        configured_full_names = {repo["full_name"].lower() for repo in cfg["repositories"]}
         for person in sorted(cfg["team"], key=team_sort_key):
             user = person["github"].lower()
             assigned = [i for i in issues if i.state == "open" and user in [a.lower() for a in i.assignees]]
@@ -234,7 +273,9 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
                            "ready_next": ordered_issues([i for i in assigned if status(i, "ready")]),
                            "assigned_backlog": ordered_issues([i for i in assigned if status(i, "backlog")]),
                            "next": [i for i in assigned if status(i, "ready") or status(i, "backlog")],
-                           "prs": [p for p in pulls if p.state == "open" and (p.author or "").lower() == user]})
+                           "prs": [p for p in pulls if p.state == "open" and (p.author or "").lower() == user],
+                           "external": [i for i in outside if i.login == user and i.repository_name.lower() not in configured_full_names],
+                           "external_sync": outside_state.get(user)})
         return result
 
     def attention(issues, pulls):
@@ -391,7 +432,8 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
     def releases_page():
         repos, _, _, releases, meta = snapshot()
         rows = sorted(filter_repo(releases), key=lambda r: r.published_at or r.created_at, reverse=True)
-        return render_template("releases.html", **common(repos, meta), releases=rows)
+        return render_template("releases.html", **common(repos, meta), releases=rows,
+                               timeline=release_timeline(rows))
 
     @app.get("/board")
     def board():
@@ -451,26 +493,63 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
     @app.post("/sync")
     def sync_now():
         started = manager.start()
-        return jsonify({"started": started, "running": manager.running})
+        return jsonify({"started": started, "reason": None if started else
+                        (manager.pause_reason() or "running"), **manager.status()})
 
     @app.get("/sync/status")
     def sync_status():
         with sessions() as session:
             meta = session.get(SyncMeta, "last_success")
             errors = [{"repository": r.name, "error": r.error} for r in session.scalars(select(Repository)).all() if r.error]
-        return jsonify({"running": manager.running, "last_success": meta.value if meta else None, "errors": errors})
+        return jsonify({**manager.status(), "server_time": datetime.now(timezone.utc).isoformat(),
+                        "last_success": meta.value if meta else None, "errors": errors})
+
+    @app.get("/notifications")
+    def notifications():
+        def timestamp_param(name):
+            value = request.args.get(name)
+            if not value:
+                return None
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                abort(400)
+            return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+
+        since = timestamp_param("since")
+        alert_since = timestamp_param("alert_since")
+        before = request.args.get("before")
+        if before is not None and (not before.isdecimal() or int(before) < 1):
+            abort(400)
+        as_of = datetime.now(timezone.utc)
+        filters = (ObservedChange.repository_name.in_(configured),
+                   ObservedChange.observed_at >= as_of - timedelta(days=30),
+                   ObservedChange.observed_at <= as_of)
+        with sessions() as session:
+            query = select(ObservedChange).where(*filters)
+            if before:
+                cursor = session.get(ObservedChange, int(before))
+                if cursor is None:
+                    abort(400)
+                query = query.where(or_(ObservedChange.observed_at < cursor.observed_at,
+                                        and_(ObservedChange.observed_at == cursor.observed_at,
+                                             ObservedChange.id < cursor.id)))
+            rows = session.scalars(query.order_by(ObservedChange.observed_at.desc(), ObservedChange.id.desc()).limit(21)).all()
+
+            def count_since(value):
+                if value is None:
+                    return 0
+                return session.scalar(select(func.count()).select_from(ObservedChange).where(
+                    *filters, ObservedChange.observed_at > value))
+
+            return jsonify({"as_of": as_of.isoformat(),
+                            "unread_count": count_since(since), "new_count": count_since(alert_since),
+                            "events": [{"id": event.id, "kind": event.kind, "repository": event.repository_name,
+                                        "number": event.number, "title": event.title, "url": event.url,
+                                        "detail": event.detail, "observed_at": event.observed_at.replace(tzinfo=timezone.utc).isoformat()}
+                                       for event in rows[:20]],
+                            "next_before": rows[19].id if len(rows) > 20 else None})
 
     if auto_sync:
-        manager.start()
-        interval = int(cfg["sync"]["interval_seconds"])
-        def schedule():
-            import threading
-            manager.start()
-            timer = threading.Timer(interval, schedule)
-            timer.daemon = True
-            timer.start()
-        import threading
-        timer = threading.Timer(interval, schedule)
-        timer.daemon = True
-        timer.start()
+        manager.enable_scheduler()
     return app

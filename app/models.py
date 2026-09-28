@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, create_engine
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
 
@@ -85,6 +85,7 @@ class Release(Base):
     github_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     repository_name: Mapped[str] = mapped_column(ForeignKey("repositories.name"), index=True)
     name: Mapped[str | None] = mapped_column(String)
+    body: Mapped[str | None] = mapped_column(Text)
     tag: Mapped[str] = mapped_column(String)
     url: Mapped[str] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -99,6 +100,15 @@ class SyncMeta(Base):
     __tablename__ = "sync_meta"
     key: Mapped[str] = mapped_column(String, primary_key=True)
     value: Mapped[str] = mapped_column(Text)
+
+
+class ApiCache(Base):
+    __tablename__ = "api_cache"
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    etag: Mapped[str] = mapped_column(String)
+    body: Mapped[str] = mapped_column(Text)
+    link: Mapped[str | None] = mapped_column(Text)
+    last_used: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class UserAvatar(Base):
@@ -119,7 +129,30 @@ class ObservedChange(Base):
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 
+class ExternalTeamIssue(Base):
+    __tablename__ = "external_team_issues"
+    login: Mapped[str] = mapped_column(String, primary_key=True)
+    github_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    repository_name: Mapped[str] = mapped_column(String)
+    number: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(Text)
+    url: Mapped[str] = mapped_column(String)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ExternalTeamSync(Base):
+    __tablename__ = "external_team_sync"
+    login: Mapped[str] = mapped_column(String, primary_key=True)
+    last_attempt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_success: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
+    incomplete: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
 def make_session(database_path):
     engine = create_engine(f"sqlite:///{database_path}", connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
+    with engine.begin() as connection:
+        if "body" not in {column["name"] for column in inspect(connection).get_columns("releases")}:
+            connection.execute(text("ALTER TABLE releases ADD COLUMN body TEXT"))
     return sessionmaker(bind=engine, expire_on_commit=False)

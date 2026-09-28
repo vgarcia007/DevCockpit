@@ -1,16 +1,17 @@
 import json
 import re
+import sqlite3
 import subprocess
 from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import select
 
-from app.github import GitHubCliClient, project_items
+from app.github import GitHubCliClient, GitHubError, project_items
 from app.changes import detect_changes
-from app.models import Issue, ObservedChange, Pull, Release, Repository, UserAvatar, make_session
-from app.sync import SyncManager, ci_state, issue_data, issue_field_priority, pull_data, review_state
-from app.web import age_days, brief_as_text, brief_with_prompt, create_app, github_project_url, latest_releases, published_releases, release_window_start, workflow_readable
+from app.models import ExternalTeamIssue, ExternalTeamSync, Issue, ObservedChange, Pull, Release, Repository, UserAvatar, make_session
+from app.sync import SyncManager, ci_state, issue_data, issue_field_priority, pull_data, review_state, search_assigned_issues
+from app.web import age_days, brief_as_text, brief_with_prompt, create_app, github_project_url, latest_releases, published_releases, release_timeline, release_window_start, workflow_readable
 
 
 CFG = {
@@ -138,6 +139,45 @@ def test_latest_release_excludes_drafts_and_prereleases():
     assert rows[1].prerelease is True
 
 
+def test_release_timeline_uses_calendar_distance_and_separates_nearby_nodes():
+    def release(number, stamp, draft=False, prerelease=False):
+        return SimpleNamespace(github_id=number, published_at=datetime.fromisoformat(stamp) if stamp else None,
+                               draft=draft, prerelease=prerelease)
+
+    timeline = release_timeline([
+        release(5, "2026-04-01T12:00:00", draft=True),
+        release(4, None),
+        release(3, "2026-03-01T12:00:00", prerelease=True),
+        release(2, "2026-01-01T12:01:00"),
+        release(1, "2026-01-01T12:00:00"),
+    ])
+    assert [node["release"].github_id for node in timeline["nodes"]] == [1, 2, 3]
+    assert timeline["nodes"][0]["top"] != timeline["nodes"][1]["top"]
+    assert timeline["nodes"][2]["left"] - timeline["nodes"][0]["left"] > 200
+    assert [tick["label"] for tick in timeline["ticks"]] == ["Jan 2026", "Feb", "Mar"]
+    assert release_timeline([release(5, "2026-04-01T12:00:00", draft=True)])["nodes"] == []
+
+
+def test_existing_release_cache_gains_notes_column(tmp_path):
+    path = tmp_path / "old.sqlite"
+    with sqlite3.connect(path) as connection:
+        connection.execute("""CREATE TABLE releases (
+            github_id INTEGER PRIMARY KEY, repository_name VARCHAR, name VARCHAR, tag VARCHAR,
+            url VARCHAR, created_at DATETIME, published_at DATETIME, draft BOOLEAN,
+            prerelease BOOLEAN, author VARCHAR)""")
+        connection.execute("""INSERT INTO releases VALUES
+            (30, 'One', 'v1', 'v1', 'https://github.com/acme/one/releases/tag/v1',
+             '2026-01-01 00:00:00', '2026-01-01 00:00:00', 0, 0, 'alice')""")
+    sessions = make_session(path)
+    with sessions() as session:
+        release = session.get(Release, 30)
+        assert release.tag == "v1" and release.body is None
+        release.body = "Release notes"
+        session.commit()
+    with make_session(path)() as session:
+        assert session.get(Release, 30).body == "Release notes"
+
+
 def test_recently_shipped_uses_published_github_releases_for_three_calendar_months():
     from zoneinfo import ZoneInfo
     now = datetime(2026, 9, 24, 15, 0, tzinfo=ZoneInfo("Europe/Berlin"))
@@ -173,7 +213,7 @@ def test_brief_text_contains_visible_facts_without_html_or_extra_items():
     cards = [{"repo": SimpleNamespace(name="One"), "latest": [release]}]
     result = brief_as_text([("URGENT", issue, "GitHub priority Urgent")] * 5,
                            [member], [pull] * 4, [issue] * 5, [release] * 4, cards, None)
-    assert "NEEDS ME (5 total, 4 shown)" in result
+    assert "NEED ATTENTION (5 total, 4 shown)" in result
     assert result.count("GitHub priority Urgent") == 4
     assert "One #10 | Fix login" in result and "Fix\nlogin" not in result
     assert "Alice (@alice) | Now 1" in result
@@ -212,19 +252,129 @@ team:
     page = app.test_client().get("/team").get_data(as_text=True)
     names = [page.index(f"<h2>{name}</h2>") for name in ("Alice", "Änne", "Bob", "Zoe")]
     assert names == sorted(names)
+    assert "Other repository assignments have not been checked yet." in page
+    assert "No tracked active or assigned work" not in page
+    sessions = make_session(tmp_path / "team.sqlite")
+    with sessions() as session:
+        session.add(ExternalTeamSync(login="alice", last_attempt=datetime.now(timezone.utc),
+                                     error="Search unavailable"))
+        session.commit()
+    page = app.test_client().get("/team").get_data(as_text=True)
+    assert "could not be refreshed" in page
+    assert "No tracked active or assigned work" not in page
 
 
+def test_notifications_count_only_recent_configured_changes_and_paginate(tmp_path):
+    config = tmp_path / "config.yml"
+    config.write_text("repositories:\n  - name: One\n    url: /acme/one\n", encoding="utf-8")
+    database = tmp_path / "notifications.sqlite"
+    app = create_app(config_path=config, database_path=database, auto_sync=False)
+    sessions = make_session(database)
+    now = datetime.now(timezone.utc)
+    with sessions() as session:
+        for number in range(22):
+            session.add(ObservedChange(repository_name="One", kind="ready", number=number,
+                                       title=f"Issue {number}", url=f"https://github.com/acme/one/issues/{number}",
+                                       detail="Moved to Ready", observed_at=now - timedelta(minutes=number + 1)))
+        session.add(ObservedChange(repository_name="Other", kind="ready", number=99, title="Hidden",
+                                   url="https://github.com/acme/other/issues/99", detail="Other repo", observed_at=now))
+        session.add(ObservedChange(repository_name="One", kind="ready", number=100, title="Old",
+                                   url="https://github.com/acme/one/issues/100", detail="Old event",
+                                   observed_at=now - timedelta(days=31)))
+        session.commit()
+    with app.test_client() as client:
+        since = (now - timedelta(minutes=5, seconds=30)).isoformat()
+        response = client.get("/notifications", query_string={"since": since, "alert_since": since})
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["unread_count"] == data["new_count"] == 5
+        assert len(data["events"]) == 20
+        assert data["next_before"] is not None
+        assert data["events"][0]["title"] == "Issue 0"
+        older = client.get("/notifications", query_string={"before": data["next_before"]}).get_json()
+        assert [item["title"] for item in older["events"]] == ["Issue 20", "Issue 21"]
+        assert older["next_before"] is None
+        assert client.get("/notifications?since=invalid").status_code == 400
+        assert client.get("/notifications?before=-1").status_code == 400
+
+
+def test_visit_changes_render_separate_link_and_completion_button(tmp_path):
+    config = tmp_path / "config.yml"
+    config.write_text("repositories:\n  - name: One\n    url: /acme/one\n", encoding="utf-8")
+    database = tmp_path / "visit.sqlite"
+    app = create_app(config_path=config, database_path=database, auto_sync=False)
+    sessions = make_session(database)
+    with sessions() as session:
+        session.add(ObservedChange(repository_name="One", kind="ready", number=10, title="Ready issue",
+                                   url="https://github.com/acme/one/issues/10", detail="Moved to Ready",
+                                   observed_at=datetime.now(timezone.utc)))
+        session.commit()
+        event_id = session.scalars(select(ObservedChange.id)).one()
+    page = app.test_client().get("/").get_data(as_text=True)
+    assert re.search(rf'data-change-key="{event_id}:\d+"', page)
+    assert 'id="visit-completed" hidden' in page
+    assert 'id="visit-completed-toggle"' in page
+    assert re.search(r'<a class="visit-event"[^>]+>.*?</a><button class="visit-check"', page, re.S)
 def test_rest_pagination():
     calls = []
     def runner(args, **kwargs):
         calls.append(args)
-        return subprocess.CompletedProcess(args, 0, json.dumps([[{"id": 1}], [{"id": 2}]]), "")
+        page = 2 if "page=2" in args else 1
+        link = 'Link: <https://api.github.com/repos/acme/one/issues?per_page=100&page=2>; rel="next"\n' if page == 1 else ''
+        return subprocess.CompletedProcess(args, 0, f'HTTP/2.0 200 OK\n{link}\n{json.dumps([{"id": page}])}', "")
     with GitHubCliClient(runner=runner) as client:
         assert [r["id"] for r in client.pages("/repos/acme/one/issues")] == [1, 2]
-    assert len(calls) == 1
-    assert "--paginate" in calls[0] and "--slurp" in calls[0]
+    assert len(calls) == 2
+    assert "--paginate" not in calls[0] and "-i" in calls[0]
+    assert "page=2" in calls[1]
     assert calls[0][:4] == ["gh", "api", "repos/acme/one/issues", "--method"]
     assert "shell" not in calls[0]
+
+
+def test_external_team_search_caches_results_and_preserves_them_on_failure(tmp_path):
+    sessions = make_session(tmp_path / "external.sqlite")
+    manager = SyncManager(sessions, CFG)
+
+    class SearchClient:
+        calls = 0
+        fail = False
+
+        def get(self, path, **params):
+            self.calls += 1
+            assert path == "/search/issues"
+            assert params == {"q": "is:issue is:open assignee:alice", "per_page": 100, "page": 1}
+            if self.fail:
+                raise GitHubError("Search unavailable")
+            return {"total_count": 1, "incomplete_results": False, "items": [{
+                "id": 40, "repository_url": "https://api.github.com/repos/acme/practice",
+                "number": 7, "title": "Practice project", "html_url": "https://github.com/acme/practice/issues/7",
+                "state": "open", "updated_at": "2026-09-25T00:00:00Z",
+            }]}
+
+    client = SearchClient()
+    manager.sync_team_issues(client)
+    with sessions() as session:
+        assert session.scalars(select(ExternalTeamIssue)).one().title == "Practice project"
+        assert session.get(ExternalTeamSync, "alice").last_success
+    client.fail = True
+    manager.sync_team_issues(client)
+    assert client.calls == 1  # Five-minute refresh interval.
+    with sessions() as session:
+        session.get(ExternalTeamSync, "alice").last_attempt = datetime.now(timezone.utc) - timedelta(minutes=6)
+        session.commit()
+    manager.sync_team_issues(client)
+    with sessions() as session:
+        assert session.scalars(select(ExternalTeamIssue)).one().title == "Practice project"
+        assert session.get(ExternalTeamSync, "alice").error == "Search unavailable"
+
+
+def test_external_team_search_marks_truncated_results():
+    class SearchClient:
+        def get(self, path, **params):
+            return {"total_count": 1001, "incomplete_results": True, "items": []}
+
+    items, incomplete = search_assigned_issues(SearchClient(), "alice")
+    assert items == [] and incomplete
 
 
 def test_cli_uses_login_without_inherited_token_variables(monkeypatch):
@@ -239,17 +389,17 @@ def test_cli_uses_login_without_inherited_token_variables(monkeypatch):
         assert client.get("/repos/acme/one")["full_name"] == "acme/one"
         assert client.graphql("query { viewer { login } }", {})["viewer"]["login"] == "alice"
     assert all(call[0][:2] == ["gh", "api"] for call in seen)
-    assert all(call[1]["check"] is True and "shell" not in call[1] for call in seen)
+    assert all(call[1]["check"] is False and "shell" not in call[1] for call in seen)
     assert all("GITHUB_TOKEN" not in call[1]["env"] and "GH_TOKEN" not in call[1]["env"] for call in seen)
-    assert seen[1][0][2:] == ["graphql", "--input", "-"]
+    assert seen[1][0][2:] == ["graphql", "--input", "-", "-i"]
     assert json.loads(seen[1][1]["input"])["query"].startswith("query")
 
 
 def test_issue_field_priority_reads_selected_github_option():
     def runner(args, **kwargs):
         assert args[2].endswith("/issue-field-values")
-        payload = [[{"issue_field_name": "Priority", "value": 42,
-                     "single_select_option": {"name": "High"}}]]
+        payload = [{"issue_field_name": "Priority", "value": 42,
+                    "single_select_option": {"name": "High"}}]
         return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
     with GitHubCliClient(runner=runner) as client:
         assert issue_field_priority(client, "acme/one", 10, "Priority") == ("High", "known")
@@ -281,6 +431,23 @@ class CliResponse:
 
 def api_handler(request):
     path = request.url.path
+    if path == "/user":
+        return CliResponse(200, json={"login": "alice"})
+    if path == "/search/issues":
+        return CliResponse(200, json={"total_count": 4, "incomplete_results": False, "items": [
+            {"id": 40, "repository_url": "https://api.github.com/repos/acme/practice",
+             "number": 7, "title": "Practice project", "html_url": "https://github.com/acme/practice/issues/7",
+             "state": "open", "updated_at": "2026-09-25T00:00:00Z"},
+            {"id": 10, "repository_url": "https://api.github.com/repos/acme/one",
+             "number": 10, "title": "Fix login", "html_url": "https://github.com/acme/one/issues/10",
+             "state": "open", "updated_at": "2026-09-20T00:00:00Z"},
+            {"id": 41, "repository_url": "https://api.github.com/repos/acme/practice",
+             "number": 8, "title": "Practice PR", "html_url": "https://github.com/acme/practice/pull/8",
+             "state": "open", "pull_request": {}, "updated_at": "2026-09-25T00:00:00Z"},
+            {"id": 42, "repository_url": "https://api.github.com/repos/acme/practice",
+             "number": 9, "title": "Closed practice", "html_url": "https://github.com/acme/practice/issues/9",
+             "state": "closed", "updated_at": "2026-09-25T00:00:00Z"},
+        ]})
     if path.startswith("/repos/acme/broken"):
         return CliResponse(404, json={"message": "Not Found"})
     if path == "/graphql":
@@ -318,7 +485,7 @@ def api_handler(request):
     if path == "/repos/acme/one/releases":
         released = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat().replace("+00:00", "Z")
         return CliResponse(200, json=[{"id": 30, "name": "v1", "tag_name": "v1", "html_url": "https://github.com/acme/one/releases/tag/v1",
-            "created_at": released, "published_at": released,
+            "created_at": released, "published_at": released, "body": "Changes:\n<script>alert(1)</script>",
             "draft": False, "prerelease": False, "author": {"login": "alice"}}])
     raise AssertionError(path)
 
@@ -330,13 +497,12 @@ def cli_runner(args, **kwargs):
     response = api_handler(request)
     if response.status_code >= 400:
         raise subprocess.CalledProcessError(1, args, stderr="gh: Not Found (HTTP 404)")
-    payload = [response.payload] if "--paginate" in args else response.payload
-    return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
+    return subprocess.CompletedProcess(args, 0, f'HTTP/2.0 200 OK\nETag: "test-{path}"\n\n{json.dumps(response.payload)}', "")
 
 
 def test_sync_isolated_repos_cache_rebuild_and_views(tmp_path, monkeypatch):
     import app.sync as sync_module
-    monkeypatch.setattr(sync_module, "GitHubCliClient", lambda: GitHubCliClient(runner=cli_runner))
+    monkeypatch.setattr(sync_module, "GitHubCliClient", lambda **kwargs: GitHubCliClient(runner=cli_runner, **kwargs))
     config = tmp_path / "config.yml"
     config.write_text("""github:\n  organization: acme\n  username: alice\nrepositories:\n  - name: Broken\n    url: /acme/broken\n  - name: One\n    url: /acme/one\n    project_number: 1\nteam:\n  - github: alice\n    name: Alice\npriority:\n  source: project\n  field: Priority\nsync:\n  interval_seconds: 60\n""")
 
@@ -356,8 +522,11 @@ def test_sync_isolated_repos_cache_rebuild_and_views(tmp_path, monkeypatch):
             assert issues[0].related_pulls[0]["number"] == 20
             assert pulls[0].ci_state == "Failing"
             assert pulls[0].review_state == "Waiting for Review"
+            assert releases[0].body == "Changes:\n<script>alert(1)</script>"
             assert session.get(UserAvatar, "alice").url == "https://avatars.githubusercontent.com/u/1"
             assert session.scalars(select(ObservedChange)).all() == []
+            external = session.scalars(select(ExternalTeamIssue)).all()
+            assert [(item.login, item.repository_name, item.number) for item in external] == [("alice", "acme/practice", 7)]
             facts = (issues[0].workflow, issues[0].priority, pulls[0].review_state,
                      pulls[0].ci_state, releases[0].tag)
         return app, facts
@@ -381,17 +550,31 @@ def test_sync_isolated_repos_cache_rebuild_and_views(tmp_path, monkeypatch):
         assert 'id="brief-export-panel"' not in brief_html
         assert brief_html.index("Erstelle aus dem folgenden technischen Arbeitsstand") < brief_html.index("Hier sind die Rohdaten:") < brief_html.index("BRIEF\n")
         assert client.get("/team").status_code == 200
+        team_html = client.get("/team").get_data(as_text=True)
+        assert "Other assigned issues" in team_html and "Practice project" in team_html
+        assert "acme/practice" in team_html
+        assert "Practice PR" not in team_html and "Closed practice" not in team_html
+        assert "1 assigned issue outside configured repositories" in text
         now_page = client.get("/now")
         assert now_page.status_code == 200
         assert "Fix login" in now_page.get_data(as_text=True)
         assert client.get("/planning").status_code == 404
         assert client.get("/issues").status_code == 200
+        assert "Practice project" not in client.get("/issues").get_data(as_text=True)
         assert client.get("/pulls").status_code == 200
         assert client.get("/board").status_code == 200
+        assert "Practice project" not in client.get("/board").get_data(as_text=True)
         repositories_page = client.get("/repositories")
         assert repositories_page.status_code == 200
         assert 'href="https://github.com/orgs/acme/projects/1" target="_blank" rel="noopener noreferrer"' in repositories_page.get_data(as_text=True)
-        assert client.get("/releases").status_code == 200
+        releases_page = client.get("/releases")
+        assert releases_page.status_code == 200
+        releases_html = releases_page.get_data(as_text=True)
+        assert 'id="release-timeline-heading"' in releases_html
+        assert 'aria-controls="release-notes-30"' in releases_html
+        assert 'id="release-notes-30"' in releases_html
+        assert "Changes:\n&lt;script&gt;alert(1)&lt;/script&gt;" in releases_html
+        assert "<script>alert(1)</script>" not in releases_html
         assert client.get("/search?q=login").status_code == 200
         assert client.get("/repositories/One").status_code == 200
         unavailable = client.get("/repositories/Broken").get_data(as_text=True)
@@ -449,3 +632,26 @@ def test_sync_isolated_repos_cache_rebuild_and_views(tmp_path, monkeypatch):
         brief_shipped = client.get("/brief").get_data(as_text=True).split("<h2>Recently shipped</h2>", 1)[1].split("<h2>Latest releases</h2>", 1)[0]
         assert "One v1 released" in brief_shipped
         assert "Fix login PR" not in brief_shipped and "Issue #10" not in brief_shipped
+
+    with session_factory() as session:
+        for number, repo, draft, prerelease in ((31, "One", False, True),
+                                                 (32, "One", True, False),
+                                                 (33, "Broken", False, False)):
+            session.add(Release(github_id=number, repository_name=repo, name=f"v{number}",
+                                tag=f"v{number}", body=None,
+                                url=f"https://github.com/acme/{repo.lower()}/releases/tag/v{number}",
+                                created_at=datetime(2025, 1, 1), published_at=datetime(2025, 1, 2),
+                                draft=draft, prerelease=prerelease, author="alice"))
+        session.commit()
+    with app.test_client() as client:
+        one_page = client.get("/releases?repo=One").get_data(as_text=True)
+        one_timeline = one_page.split('class="release-timeline-section"', 1)[1]
+        assert "v32" in one_page  # Draft remains in the table.
+        assert 'data-release-node="30"' in one_timeline
+        assert 'data-release-node="31"' in one_timeline
+        assert 'data-release-node="32"' not in one_timeline
+        assert 'data-release-node="33"' not in one_timeline
+        assert "No release notes available." in one_timeline
+        broken_timeline = client.get("/releases?repo=Broken").get_data(as_text=True).split('class="release-timeline-section"', 1)[1]
+        assert 'data-release-node="33"' in broken_timeline
+        assert 'data-release-node="30"' not in broken_timeline

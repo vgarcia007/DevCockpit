@@ -1,10 +1,11 @@
 import logging
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import delete, select
 from .changes import detect_changes
-from .github import GitHubCliClient, GitHubError, project_items, related_issues
-from .models import Issue, ObservedChange, Pull, Release, Repository, SyncMeta, UserAvatar
+from .github import GitHubCliClient, GitHubError, RateLimitError, project_items, related_issues
+from .models import ExternalTeamIssue, ExternalTeamSync, Issue, ObservedChange, Pull, Release, Repository, SyncMeta, UserAvatar
 
 LOG = logging.getLogger(__name__)
 
@@ -115,9 +116,28 @@ def pull_data(item, detail, reviews, checks, status, related, repo_name):
 
 def release_data(item, repo_name):
     return dict(github_id=item["id"], repository_name=repo_name, name=item.get("name"),
-                tag=item["tag_name"], url=item["html_url"], created_at=date(item["created_at"]),
+                body=item.get("body"), tag=item["tag_name"], url=item["html_url"], created_at=date(item["created_at"]),
                 published_at=date(item.get("published_at")), draft=bool(item.get("draft")),
                 prerelease=bool(item.get("prerelease")), author=login(item.get("author")))
+
+
+def search_assigned_issues(client, login_name, get=None):
+    """Fetch accessible open issues assigned to one person, up to GitHub's search cap."""
+    get = get or client.get
+    items = []
+    incomplete = False
+    query = f"is:issue is:open assignee:{login_name}"
+    for page in range(1, 11):
+        response = get("/search/issues", q=query, per_page=100, page=page)
+        if not isinstance(response, dict) or not isinstance(response.get("items"), list) or not isinstance(response.get("total_count"), int):
+            raise GitHubError("Unexpected GitHub issue search response")
+        batch = response["items"]
+        items.extend(batch)
+        incomplete = incomplete or bool(response.get("incomplete_results")) or response["total_count"] > 1000
+        if len(batch) < 100 or len(items) >= min(response["total_count"], 1000):
+            incomplete = incomplete or len(items) < min(response["total_count"], 1000)
+            break
+    return items[:1000], incomplete
 
 
 def issue_field_priority(client, full_name, number, field):
@@ -136,32 +156,97 @@ class SyncManager:
         self.config = config
         self.lock = threading.Lock()
         self.running = False
+        self.scheduler_enabled = False
+        self.timer = None
+        self.next_sync_at = None
+        with self.sessions() as session:
+            saved_pause = session.get(SyncMeta, "rate_limit_until")
+            saved_failures = session.get(SyncMeta, "rate_limit_failures")
+        self.cooldown_until = date(saved_pause.value) if saved_pause and saved_pause.value else None
+        self.rate_failures = int(saved_failures.value) if saved_failures and saved_failures.value else 0
+
+    def enable_scheduler(self):
+        self.scheduler_enabled = True
+        if self.cooldown_until and self.cooldown_until > datetime.now(timezone.utc):
+            self._schedule(self.cooldown_until)
+        else:
+            self.start()
+
+    def _schedule(self, when):
+        if self.timer:
+            self.timer.cancel()
+        self.next_sync_at = when
+        self.timer = threading.Timer(max(0, (when - datetime.now(timezone.utc)).total_seconds()), self.start)
+        self.timer.daemon = True
+        self.timer.start()
+
+    def pause_reason(self):
+        return "rate_limit" if self.cooldown_until and self.cooldown_until > datetime.now(timezone.utc) else None
+
+    def status(self):
+        return {"running": self.running,
+                "next_sync_at": self.next_sync_at.isoformat() if self.next_sync_at and not self.running else None,
+                "rate_limit_until": self.cooldown_until.isoformat() if self.pause_reason() else None}
 
     def start(self):
+        if self.pause_reason():
+            if self.scheduler_enabled:
+                self._schedule(self.cooldown_until)
+            return False
         if not self.lock.acquire(blocking=False):
             return False
+        if self.timer:
+            self.timer.cancel()
+            self.timer = None
+        self.next_sync_at = None
         self.running = True
         thread = threading.Thread(target=self._run, daemon=True, name="github-sync")
         thread.start()
         return True
 
     def run_sync(self):
+        if self.pause_reason():
+            return False
         if not self.lock.acquire(blocking=False):
             return False
         self.running = True
         self._run()
         return True
 
+    def _record_rate_limit(self, exc):
+        self.rate_failures += 1
+        now = datetime.now(timezone.utc)
+        fallback = now + timedelta(seconds=min(60 * 2 ** min(self.rate_failures - 1, 6), 3600))
+        self.cooldown_until = max(now + timedelta(seconds=1), exc.retry_at or fallback)
+        with self.sessions() as session:
+            session.merge(SyncMeta(key="rate_limit_until", value=self.cooldown_until.isoformat()))
+            session.merge(SyncMeta(key="rate_limit_failures", value=str(self.rate_failures)))
+            session.commit()
+        LOG.warning("GitHub rate limit; next attempt after %s", self.cooldown_until.isoformat())
+
+    def _clear_rate_limit(self):
+        if not self.cooldown_until and not self.rate_failures:
+            return
+        self.cooldown_until = None
+        self.rate_failures = 0
+        with self.sessions() as session:
+            session.merge(SyncMeta(key="rate_limit_until", value=""))
+            session.merge(SyncMeta(key="rate_limit_failures", value="0"))
+            session.commit()
+
     def _run(self):
+        successes = 0
+        rate_limited = False
         try:
-            with GitHubCliClient() as client:
-                successes = 0
+            with GitHubCliClient(cache_sessions=self.sessions) as client:
                 org_diagnostic = None
                 org_checked = False
                 for repo in self.config["repositories"]:
                     try:
                         self.sync_repo(client, repo)
                         successes += 1
+                    except RateLimitError:
+                        raise
                     except Exception as exc:
                         if isinstance(exc, GitHubError) and exc.status == 404 and not org_checked:
                             org_checked = True
@@ -170,6 +255,8 @@ class SyncManager:
                                 try:
                                     client.graphql("query($login:String!){organization(login:$login){login}}",
                                                    {"login": organization})
+                                except RateLimitError:
+                                    raise
                                 except GitHubError as diagnostic:
                                     org_diagnostic = str(diagnostic)
                         if isinstance(exc, GitHubError) and exc.status == 404 and org_diagnostic:
@@ -188,14 +275,82 @@ class SyncManager:
                             row.error = str(exc)
                             session.commit()
                 self.rebuild_links()
+                self.sync_team_issues(client)
+                self._clear_rate_limit()
+                LOG.info("Sync completed: %s/%s repositories", successes, len(self.config["repositories"]))
+        except RateLimitError as exc:
+            rate_limited = True
+            self._record_rate_limit(exc)
+        except Exception:
+            LOG.exception("Sync interrupted")
+        finally:
+            try:
                 if successes:
                     with self.sessions() as session:
                         session.merge(SyncMeta(key="last_success", value=datetime.now(timezone.utc).isoformat()))
                         session.commit()
-                LOG.info("Sync completed: %s/%s repositories", successes, len(self.config["repositories"]))
-        finally:
-            self.running = False
-            self.lock.release()
+            finally:
+                self.running = False
+                self.lock.release()
+                if self.scheduler_enabled:
+                    next_time = datetime.now(timezone.utc) + timedelta(seconds=int(self.config["sync"]["interval_seconds"]))
+                    self._schedule(max(next_time, self.cooldown_until) if rate_limited and self.cooldown_until else next_time)
+
+    def sync_team_issues(self, client):
+        configured = {repo["full_name"].lower() for repo in self.config["repositories"]}
+        request_times = []
+
+        def limited_get(path, **params):
+            now = time.monotonic()
+            request_times[:] = [stamp for stamp in request_times if now - stamp < 60]
+            if len(request_times) >= 25:
+                time.sleep(max(0, 60 - (now - request_times[0])))
+                now = time.monotonic()
+                request_times[:] = [stamp for stamp in request_times if now - stamp < 60]
+            request_times.append(now)
+            return client.get(path, **params)
+
+        for person in self.config["team"]:
+            user = person["github"].lower()
+            with self.sessions() as session:
+                state = session.get(ExternalTeamSync, user)
+                if state and state.last_attempt and datetime.now(timezone.utc) - state.last_attempt.replace(tzinfo=timezone.utc) < timedelta(minutes=5):
+                    continue
+            try:
+                items, incomplete = search_assigned_issues(client, user, limited_get)
+                rows_by_id = {}
+                for item in items:
+                    repository_url = item.get("repository_url") or ""
+                    prefix = "https://api.github.com/repos/"
+                    if not repository_url.startswith(prefix):
+                        raise GitHubError("GitHub issue search omitted a repository")
+                    full_name = repository_url[len(prefix):]
+                    if full_name.lower() in configured or item.get("state") != "open" or "pull_request" in item:
+                        continue
+                    rows_by_id[item["id"]] = ExternalTeamIssue(login=user, github_id=item["id"],
+                        repository_name=full_name, number=item["number"], title=item["title"],
+                        url=item["html_url"], updated_at=date(item["updated_at"]))
+            except RateLimitError:
+                raise
+            except Exception as exc:
+                LOG.warning("External team issue search failed for %s: %s", user, exc)
+                with self.sessions() as session:
+                    state = session.get(ExternalTeamSync, user) or ExternalTeamSync(login=user)
+                    state.last_attempt = datetime.now(timezone.utc)
+                    state.error = str(exc)
+                    session.add(state)
+                    session.commit()
+                continue
+            with self.sessions() as session:
+                session.execute(delete(ExternalTeamIssue).where(ExternalTeamIssue.login == user))
+                session.add_all(rows_by_id.values())
+                state = session.get(ExternalTeamSync, user) or ExternalTeamSync(login=user)
+                state.last_attempt = datetime.now(timezone.utc)
+                state.last_success = state.last_attempt
+                state.error = None
+                state.incomplete = incomplete
+                session.add(state)
+                session.commit()
 
     def rebuild_links(self):
         with self.sessions() as session:
@@ -247,6 +402,8 @@ class SyncManager:
                 if self.config["priority"]["source"] == "project" and self.config["priority"]["field"] not in fields:
                     warnings.append("Project priority field is missing")
             except GitHubError as exc:
+                if isinstance(exc, RateLimitError):
+                    raise
                 project_state = "unavailable"
                 warnings.append(f"Project unavailable: {exc}")
         issue_priority_field_available = False
@@ -258,6 +415,8 @@ class SyncManager:
                 if not issue_priority_field_available:
                     warnings.append("Organization priority issue field is missing")
             except GitHubError as exc:
+                if isinstance(exc, RateLimitError):
+                    raise
                 warnings.append(f"Organization issue fields unavailable: {exc}")
         issue_rows = []
         for item in issues:
@@ -266,12 +425,16 @@ class SyncManager:
                 try:
                     priority, pstate = issue_field_priority(client, full, item["number"], self.config["priority"]["field"])
                 except GitHubError as exc:
+                    if isinstance(exc, RateLimitError):
+                        raise
                     pstate = "unavailable"
                     warnings.append(f"Issue fields unavailable: {exc}")
             issue_rows.append(issue_data(item, repo["name"], project, project_state, fields, self.config, priority, pstate))
         try:
             relations = related_issues(client, [p for p in pulls if p["state"] == "open"])
         except GitHubError as exc:
+            if isinstance(exc, RateLimitError):
+                raise
             relations = {}
             warnings.append(f"Issue–PR links unavailable: {exc}")
         pull_rows = []
@@ -282,6 +445,8 @@ class SyncManager:
                     detail = client.get(f"{base}/pulls/{item['number']}")
                     reviews = list(client.pages(f"{base}/pulls/{item['number']}/reviews"))
                 except GitHubError as exc:
+                    if isinstance(exc, RateLimitError):
+                        raise
                     status = "unavailable"
                     warnings.append(f"PR #{item['number']} reviews unavailable: {exc}")
                 try:
@@ -300,6 +465,8 @@ class SyncManager:
                         runs = {"check_runs": all_runs}
                     checks = ci_state(runs, context)
                 except GitHubError as exc:
+                    if isinstance(exc, RateLimitError):
+                        raise
                     warnings.append(f"PR #{item['number']} checks unavailable: {exc}")
             for user in detail.get("assignees") or []:
                 remember(user)

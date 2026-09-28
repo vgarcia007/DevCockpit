@@ -8,8 +8,8 @@ GitHub remains the source of truth. DevCockpit cannot edit issues, pull requests
 
 ## Requirements
 
-- Linux with Python 3.10 or newer and the `venv` module (`start.sh` uses Linux `/proc` to restart an existing instance)
-- [GitHub CLI](https://cli.github.com/) (`gh`) installed and authenticated to an account that can read the selected repositories
+- Python 3.10 or newer with `venv` on Linux or Windows (`start.sh` uses Linux `/proc` to restart an existing instance)
+- [GitHub CLI](https://cli.github.com/) (`gh`) installed and authenticated in the operating system where you start DevCockpit
 - Access to `api.github.com`
 
 No personal access token or `.env` file is needed. DevCockpit calls `gh api` and `gh api graphql` using your existing CLI login. It does not read or store the CLI's credentials.
@@ -24,9 +24,15 @@ cp config.example.yml config.yml
 ./start.sh
 ```
 
-Open <http://127.0.0.1:5000>. `start.sh` creates `.venv`, installs dependencies when `requirements.txt` changes, checks the CLI login and configuration file, and starts the app. Re-running it stops a prior DevCockpit instance started from the same directory before starting a new one. Other processes are left alone. Set `HOST` and `PORT` in the process environment if you need a different listener.
+Open <http://127.0.0.1:7777>. `start.sh` creates `.venv`, installs dependencies when `requirements.txt` changes, checks the CLI login and configuration file, and starts the app. Re-running it stops a prior DevCockpit instance started from the same directory before starting a new one. Other processes are left alone. Set `HOST` and `PORT` in the process environment if you need a different listener.
 
-The first full sync runs in the background. The UI shows the last successful sync and any repository-specific errors. **Sync now** requests an immediate refresh; the configured interval controls later automatic syncs. Syncs do not overlap. After changing `config.yml`, restart with `./start.sh` to load it, then allow the full sync to finish.
+The first full sync runs in the background. The UI shows the last successful sync, a countdown to the next automatic sync, and any repository-specific errors. **Sync now** requests an immediate refresh and restarts the countdown. Automatic syncs begin after the configured interval following completion of the previous sync; they do not overlap. After changing `config.yml`, restart with `./start.sh` to load it, then allow the full sync to finish.
+
+### Windows start
+
+Install Windows Python 3.10 or newer and the Windows GitHub CLI, then run `gh auth login` in a Windows terminal. The Windows login is separate from the WSL login. From a Windows-drive checkout, double-click [`start.bat`](start.bat). It creates `.venv-win`, installs dependencies when `requirements.txt` changes, and starts DevCockpit at <http://127.0.0.1:7777>. Keep the console window open; press Ctrl+C there to stop the server. The Linux `.venv` and Windows `.venv-win` are separate. Set `PORT` in the Windows environment before starting to use another port.
+
+This checkout is currently under WSL. On this Windows installation, security policy blocks double-clicking a batch file through `\\wsl.localhost`. To try it from Windows CMD instead, run `pushd \\wsl.localhost\Ubuntu-26.04\home\freilinger\gitdash` followed by `start.bat`. The batch file also maps a UNC project path to a temporary drive letter when invoked directly. Run only one DevCockpit instance against a checkout at a time.
 
 To rebuild the cache from GitHub, stop the app, remove `instance/cockpit.sqlite`, and start again. Observed change history begins anew after a rebuild; current GitHub facts are restored by the full sync.
 
@@ -44,7 +50,7 @@ To rebuild the cache from GitHub, stop the app, remove `instance/cockpit.sqlite`
 | `repositories[].project_owner` | Optional owner override for a Project. |
 | `repositories[].project_owner_type` | Set to `user` for a user-owned Project; organization is the default. |
 | `team[].github` / `team[].name` | Exact GitHub login and a display name for a person shown in Team and Brief. Other contributors still appear on issues and PRs. |
-| `sync.interval_seconds` | Automatic sync interval; minimum 10 seconds. |
+| `sync.interval_seconds` | Seconds after a completed sync before the next automatic sync; default 300, minimum 10. |
 
 ### Repositories and Project ownership
 
@@ -77,6 +83,8 @@ Set `priority.source` to `project` to read the named Project field, or `issue_fi
 
 Add one `team` entry per person whose work you want in the Team and Brief views. `github` must be the exact GitHub login used as an issue assignee or PR author; `name` is only the display label. The example includes three placeholder members. People omitted from `team` still appear on their issues and PRs, but do not get a person section. Duplicate logins are collapsed. `github.username` above controls only the personal quick filters; add yourself to `team` as well if you want your own person section.
 
+Team also shows open issues assigned to these people in other repositories visible to the authenticated GitHub account. They appear separately as **Other assigned issues** on `/team`, with a count in the Briefing's Team section. Those repositories do not need to be added to `repositories`, and their issues do not affect Project workflow or Board totals. GitHub search refreshes this extra data at most every five minutes; the Team view marks failed or incomplete searches.
+
 ## GitHub access
 
 The authenticated `gh` account needs read access to repository metadata, issues, pull requests, contents, checks or commit statuses, Actions, releases, and each configured Project. Organization Projects may require organization approval or the `read:project` scope. If GitHub reports a missing scope, run this yourself and sync again:
@@ -87,22 +95,26 @@ gh auth refresh -s read:project
 
 DevCockpit does not change CLI authentication or request write permissions. GitHub may return 404 for repositories the account cannot read. A failure for one repository is shown in the UI and does not stop other repositories from syncing.
 
+REST responses with ETags are checked conditionally and reused when GitHub reports no change. If GitHub reports a rate limit, DevCockpit pauses automatic and manual syncs until the retry time, then resumes automatically; the sidebar shows the remaining time. Cached responses and the retry deadline survive restarts on this computer.
+
 ## Views
 
-- **Briefing** (`/`): changes since the previous browser visit, **Needs me**, team work, Ready issues, recent GitHub Releases, and repository state.
+- **Briefing** (`/`): changes since the previous browser visit, **Need attention**, team work, Ready issues, recent GitHub Releases, and repository state.
 - **Brief** (`/brief`): compact overview for a quick conversation. **Copy as prompt** immediately copies the configured prompt followed by the visible Brief facts as plain text; no text panel opens.
 - **Now** (`/now`): open issues explicitly marked In Progress in their GitHub Project.
-- **Team** (`/team`): each person's Now, Review, Ready next, Assigned Backlog, and open PRs, ordered alphabetically by display name.
+- **Team** (`/team`): each person's Now, Review, Ready next, Assigned Backlog, open PRs, and other assigned issues, ordered alphabetically by display name.
 - **Issues** (`/issues`), **Pull Requests** (`/pulls`), and **Releases** (`/releases`): searchable and filterable lists. Filters apply when selections change or typing pauses.
 - **Repositories** (`/repositories`): release, workflow, PR, and attention summary for each repository, with direct links to its GitHub Project.
 - **Board** (`/board`): read-only cross-repository view of Project status.
 - **Search** (`/search`): search cached issues and PRs.
 
-**Needs me** gives the reason for each item, including Urgent or High priority open issues, review requests, requested changes, and failing CI. PR review and CI states are technical signals separate from Project workflow status. PR age is calculated from the actual GitHub creation timestamp. Issue–PR links use GitHub's closing references, not title matching.
+**Need attention** gives the reason for each item, including Urgent or High priority open issues, review requests, requested changes, and failing CI. PR review and CI states are technical signals separate from Project workflow status. PR age is calculated from the actual GitHub creation timestamp. Issue–PR links use GitHub's closing references, not title matching.
 
 **Recently shipped** shows published GitHub Releases only, by default going back three calendar months. Drafts are excluded and prereleases are marked. Merged PRs are not counted as releases.
 
-**Since your last visit** compares browser visits with changes observed between successful syncs. The visit timestamp is kept in that browser; observations are retained in SQLite for 30 days. It cannot reconstruct changes that appeared and disappeared between syncs.
+**Since your last visit** compares browser visits with changes observed between successful syncs. The visit timestamp is kept in that browser; observations are retained in SQLite for 30 days. You can mark individual changes as done and restore them from the collapsed Completed section. Completion marks are stored in this browser and do not affect the notification bell. It cannot reconstruct changes that appeared and disappeared between syncs.
+
+The **notification bell** shows these observed changes on every page. Its unread count clears when you open the list; changes after a sync also appear as one brief in-app message. You can enable browser alerts from the bell. They appear only while this browser tab remains open in the background, and are grouped into one alert per batch. The browser asks for permission only when you enable them. Notification state is stored in this browser, and the first visit starts without old alerts.
 
 To change the text prepended by **Copy as prompt**, edit [`brief_prompt.txt`](brief_prompt.txt). The file is read when `/brief` is loaded, so refresh the page after editing it. DevCockpit only copies the prompt and data to your clipboard; it does not call an LLM or send the content anywhere.
 

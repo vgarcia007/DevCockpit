@@ -31,7 +31,7 @@ def load_config(path=None):
     data["priority"].setdefault("field", "Priority")
     if data["priority"]["source"] not in ("project", "issue_field"):
         raise ValueError("priority.source must be project or issue_field")
-    data.setdefault("sync", {}).setdefault("interval_seconds", 60)
+    data.setdefault("sync", {}).setdefault("interval_seconds", 300)
     if int(data["sync"]["interval_seconds"]) < 10:
         raise ValueError("sync.interval_seconds must be at least 10")
     unique = {}
