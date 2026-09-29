@@ -8,7 +8,7 @@ A local, read-only dashboard for a team's GitHub work. It brings Issues, Project
 ## What you need
 
 - Python 3.10+ and `venv` on Linux or WSL
-- [GitHub CLI (`gh`)](https://cli.github.com/) installed and signed in with an account that can read your repositories
+- [GitHub CLI (`gh`)](https://cli.github.com/) installed and signed in with an account that can read your repositories `sudo apt update && sudo apt install -y gh`
 - Read access to your GitHub Projects v2 if you want workflow status
 
 No GitHub token or `.env` file is needed. OTRS is optional.
