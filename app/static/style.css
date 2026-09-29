@@ -234,6 +234,11 @@ a,button,summary,input,select { transition:background-color .13s ease,border-col
 .compact-filter { width:fit-content; max-width:100%; }
 .compact-filter .form-select { min-width:185px; }
 .table-title { min-width:240px; max-width:470px!important; }
+.ticket-pagination { display:flex; align-items:center; justify-content:flex-end; gap:16px; margin-top:16px; font-size:13px; }
+.table tr.ticket-highlight > td { background:var(--color-warning-soft); }
+.table tr.ticket-highlight > td:first-child { border-left:3px solid var(--color-warning); }
+.ticket-highlight-label { color:var(--color-warning); font-weight:700; }
+.ticket-need-row .repo-tag { max-width:170px; }
 .table-title a { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
 .person-cell { display:flex; align-items:center; gap:5px; max-width:240px; }
 .person-cell span:last-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

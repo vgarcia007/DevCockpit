@@ -3,11 +3,13 @@ import unicodedata
 from calendar import month_abbr, monthrange
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 from flask import Flask, abort, redirect, render_template, request, url_for, jsonify
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from .config import ROOT, load_config
-from .models import ExternalTeamIssue, ExternalTeamSync, Issue, ObservedChange, Pull, Release, Repository, SyncMeta, UserAvatar, make_session
+from .models import ExternalTeamIssue, ExternalTeamSync, Issue, ObservedChange, OTRSObservedChange, OTRSSyncState, OTRSTicket, Pull, Release, Repository, SyncMeta, UserAvatar, make_session
+from .otrs import OTRSSyncManager
 from .sync import SyncManager
 
 LOG = logging.getLogger(__name__)
@@ -201,9 +203,15 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
     instance = ROOT / "instance"
     instance.mkdir(exist_ok=True)
     sessions = make_session(database_path or instance / "cockpit.sqlite")
+    otrs_config = cfg.get("otrs")
+    otrs_enabled = bool(otrs_config and otrs_config.get("enabled"))
     configured = {repo["name"] for repo in cfg["repositories"]}
     configured_repositories = {repo["name"]: repo for repo in cfg["repositories"]}
     with sessions() as session:
+        if not otrs_enabled:
+            session.execute(delete(OTRSTicket))
+            session.execute(delete(OTRSSyncState))
+            session.execute(delete(OTRSObservedChange))
         for existing in session.scalars(select(Repository)).all():
             if existing.name not in configured:
                 session.delete(existing)
@@ -214,9 +222,11 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
                     project_number=repo.get("project_number"), project_state="not_synced"))
         session.commit()
     manager = SyncManager(sessions, cfg)
+    otrs_manager = OTRSSyncManager(sessions, otrs_config) if otrs_enabled else None
     app = Flask(__name__)
     app.config["COCKPIT_CONFIG"] = cfg
     app.config["SYNC_MANAGER"] = manager
+    app.config["OTRS_SYNC_MANAGER"] = otrs_manager
     app.jinja_env.filters["date"] = fmt_date
     app.jinja_env.filters["datetime"] = fmt_time
     app.jinja_env.filters["age"] = age_days
@@ -253,6 +263,7 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
             avatars = {user.login: user.url for user in session.scalars(select(UserAvatar)).all()}
         return {"repositories": repos, "last_sync": datetime.fromisoformat(meta.value) if meta else None,
                 "sync_running": manager.running, "github_user": cfg.get("github", {}).get("username", ""),
+                "otrs_enabled": otrs_manager is not None,
                 "avatars": avatars,
                 "workflow_coverage": sum(workflow_readable(r) for r in repos),
                 "workflow_total": len(repos),
@@ -345,7 +356,16 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
             ).order_by(ObservedChange.observed_at.desc(), ObservedChange.id.desc())).all()
             changes = [{"event": event, "observed_ms": int(event.observed_at.replace(tzinfo=timezone.utc).timestamp() * 1000)}
                        for event in observed]
-        return render_template("home.html", **common(repos, meta), attention=lead_attention(open_issues, open_pulls),
+            attention_tickets = session.scalars(select(OTRSTicket).where(
+                OTRSTicket.queue_id.in_(otrs_config["attention_queue_ids"]),
+                ~func.lower(func.trim(OTRSTicket.state)).in_([
+                    state.strip().casefold() for state in otrs_config["excluded_states"]]),
+            ).order_by(OTRSTicket.created_at.desc(), OTRSTicket.number.desc())).all() if otrs_manager else []
+        github_attention = lead_attention(open_issues, open_pulls)
+        return render_template("home.html", **common(repos, meta), attention=github_attention,
+            attention_tickets=attention_tickets,
+            attention_count=len(github_attention) + len(attention_tickets),
+            otrs_url=cfg["otrs"]["url"].rstrip("/") + "/index.pl" if otrs_manager else None,
             observed_changes=changes,
             team=team_data(open_issues, open_pulls), ready=ready, ready_counts=counts,
             ready_unassigned=sum(not i.assignees for i in ready),
@@ -409,6 +429,58 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
         else:
             rows = sorted(rows, key=lambda i: getattr(i, "created_at" if sort == "created" else "updated_at"), reverse=True)
         return render_template("issues.html", **common(repos, meta), issues=rows, cfg=cfg)
+
+    @app.get("/tickets")
+    def tickets_page():
+        if otrs_manager is None:
+            abort(404)
+        page = request.args.get("page", "1")
+        if not page.isdecimal() or int(page) < 1:
+            abort(404)
+        page = int(page)
+        per_page = 50
+        active_filters = {name: request.args.get(name, "").strip()
+                          for name in ("queue", "status", "priority", "owner", "q", "sort")}
+        def contains_text(column, value):
+            escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            return column.ilike(f"%{escaped}%", escape="\\")
+
+        conditions = []
+        for name, column in (("queue", OTRSTicket.queue), ("status", OTRSTicket.state),
+                             ("priority", OTRSTicket.priority)):
+            if active_filters[name]:
+                conditions.append(column == active_filters[name])
+        if active_filters["owner"]:
+            conditions.append(contains_text(OTRSTicket.owner, active_filters["owner"]))
+        if active_filters["q"]:
+            conditions.append(or_(*(contains_text(column, active_filters["q"]) for column in
+                                    (OTRSTicket.number, OTRSTicket.subject, OTRSTicket.queue,
+                                     OTRSTicket.state, OTRSTicket.priority, OTRSTicket.owner))))
+        sort = active_filters["sort"] if active_filters["sort"] in ("newest", "oldest") else "newest"
+        ordering = (OTRSTicket.created_at.asc(), OTRSTicket.number.asc()) if sort == "oldest" else (
+            OTRSTicket.created_at.desc(), OTRSTicket.number.desc())
+        with sessions() as session:
+            total = session.scalar(select(func.count()).select_from(OTRSTicket).where(*conditions)) or 0
+            pages = max(1, (total + per_page - 1) // per_page)
+            if page > pages:
+                abort(404)
+            tickets = session.scalars(select(OTRSTicket).where(*conditions).order_by(*ordering)
+                                      .offset((page - 1) * per_page).limit(per_page)).all()
+            queues = sorted(set(session.scalars(select(OTRSTicket.queue).distinct()).all()))
+            highlight_queues = sorted(set(session.scalars(select(OTRSTicket.queue).where(
+                OTRSTicket.queue_id.in_(otrs_config["highlight_queue_ids"]))).all()))
+            statuses = session.scalars(select(OTRSTicket.state).distinct().order_by(OTRSTicket.state)).all()
+            priorities = session.scalars(select(OTRSTicket.priority).distinct().order_by(OTRSTicket.priority)).all()
+            otrs_state = session.get(OTRSSyncState, "tickets")
+        repos, _, _, _, meta = snapshot()
+        return render_template("tickets.html", **common(repos, meta), tickets=tickets,
+                               total=total, page=page, pages=pages, otrs_state=otrs_state,
+                               queues=queues, statuses=statuses, priorities=priorities,
+                               highlight_queues=highlight_queues,
+                               highlight_queue_ids=otrs_config["highlight_queue_ids"],
+                               active_filters={key: value for key, value in active_filters.items() if value},
+                               otrs_running=otrs_manager.running,
+                               otrs_url=cfg["otrs"]["url"].rstrip("/") + "/index.pl")
 
     @app.get("/pulls")
     def pulls_page():
@@ -515,7 +587,8 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
         with sessions() as session:
             meta = session.get(SyncMeta, "last_success")
             errors = [{"repository": r.name, "error": r.error} for r in session.scalars(select(Repository)).all() if r.error]
-        return jsonify({**manager.status(), "server_time": datetime.now(timezone.utc).isoformat(),
+        return jsonify({**manager.status(), "otrs_running": otrs_manager.running if otrs_manager else False,
+                        "server_time": datetime.now(timezone.utc).isoformat(),
                         "last_success": meta.value if meta else None, "errors": errors})
 
     @app.get("/notifications")
@@ -533,37 +606,68 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
         since = timestamp_param("since")
         alert_since = timestamp_param("alert_since")
         before = request.args.get("before")
-        if before is not None and (not before.isdecimal() or int(before) < 1):
+        source, _, identifier = before.partition(":") if before else ("", "", "")
+        if before and before.isdecimal():
+            source, identifier = "g", before
+        if before and (source not in ("g", "o") or not identifier.isdecimal() or int(identifier) < 1):
             abort(400)
         as_of = datetime.now(timezone.utc)
-        filters = (ObservedChange.repository_name.in_(configured),
-                   ObservedChange.observed_at >= as_of - timedelta(days=30),
-                   ObservedChange.observed_at <= as_of)
+        github_filters = (ObservedChange.repository_name.in_(configured),
+                          ObservedChange.observed_at >= as_of - timedelta(days=30),
+                          ObservedChange.observed_at <= as_of)
+        otrs_filters = (OTRSObservedChange.queue_id.in_(otrs_config["attention_queue_ids"]),
+                        OTRSObservedChange.observed_at >= as_of - timedelta(days=30),
+                        OTRSObservedChange.observed_at <= as_of) if otrs_manager else None
+        otrs_url_parts = urlsplit(otrs_config["url"]) if otrs_manager else None
+        otrs_origin = f"{otrs_url_parts.scheme}://{otrs_url_parts.netloc}" if otrs_url_parts else None
         with sessions() as session:
-            query = select(ObservedChange).where(*filters)
+            cursor = None
             if before:
-                cursor = session.get(ObservedChange, int(before))
+                cursor = session.get(ObservedChange if source == "g" else OTRSObservedChange, int(identifier))
                 if cursor is None:
                     abort(400)
-                query = query.where(or_(ObservedChange.observed_at < cursor.observed_at,
-                                        and_(ObservedChange.observed_at == cursor.observed_at,
-                                             ObservedChange.id < cursor.id)))
-            rows = session.scalars(query.order_by(ObservedChange.observed_at.desc(), ObservedChange.id.desc()).limit(21)).all()
+            def page_query(model, filters, rank):
+                query = select(model).where(*filters)
+                if cursor:
+                    tie = model.observed_at == cursor.observed_at
+                    if rank < (1 if source == "g" else 0):
+                        query = query.where(or_(model.observed_at < cursor.observed_at, tie))
+                    elif rank == (1 if source == "g" else 0):
+                        query = query.where(or_(model.observed_at < cursor.observed_at,
+                                                and_(tie, model.id < cursor.id)))
+                    else:
+                        query = query.where(model.observed_at < cursor.observed_at)
+                return session.scalars(query.order_by(model.observed_at.desc(), model.id.desc()).limit(21)).all()
 
-            def count_since(value):
+            combined = [("g", event) for event in page_query(ObservedChange, github_filters, 1)]
+            if otrs_filters:
+                combined += [("o", event) for event in page_query(OTRSObservedChange, otrs_filters, 0)]
+            combined.sort(key=lambda item: (item[1].observed_at.replace(tzinfo=timezone.utc),
+                                            1 if item[0] == "g" else 0, item[1].id), reverse=True)
+            shown = combined[:20]
+
+            def count_since(model, filters, value):
                 if value is None:
                     return 0
-                return session.scalar(select(func.count()).select_from(ObservedChange).where(
-                    *filters, ObservedChange.observed_at > value))
+                return session.scalar(select(func.count()).select_from(model).where(
+                    *filters, model.observed_at > value)) or 0
+
+            def total_since(value):
+                return count_since(ObservedChange, github_filters, value) + (
+                    count_since(OTRSObservedChange, otrs_filters, value) if otrs_filters else 0)
 
             return jsonify({"as_of": as_of.isoformat(),
-                            "unread_count": count_since(since), "new_count": count_since(alert_since),
-                            "events": [{"id": event.id, "kind": event.kind, "repository": event.repository_name,
+                            "unread_count": total_since(since), "new_count": total_since(alert_since),
+                            "otrs_origin": otrs_origin,
+                            "events": [{"id": f"{source}:{event.id}", "source": "github" if source == "g" else "otrs",
+                                        "kind": event.kind, "repository": event.repository_name if source == "g" else event.queue,
                                         "number": event.number, "title": event.title, "url": event.url,
                                         "detail": event.detail, "observed_at": event.observed_at.replace(tzinfo=timezone.utc).isoformat()}
-                                       for event in rows[:20]],
-                            "next_before": rows[19].id if len(rows) > 20 else None})
+                                       for source, event in shown],
+                            "next_before": f"{shown[-1][0]}:{shown[-1][1].id}" if len(combined) > 20 else None})
 
     if auto_sync:
         manager.enable_scheduler()
+        if otrs_manager:
+            otrs_manager.enable_scheduler()
     return app

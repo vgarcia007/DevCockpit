@@ -87,6 +87,7 @@ if (syncCountdown) {
   let checking = false;
   let lastCheck = 0;
   let toastTimer;
+  let otrsOrigin = null;
 
   const countLabel = n => `${n} new change${n === 1 ? '' : 's'}`;
   const updateBadge = n => {
@@ -117,7 +118,9 @@ if (syncCountdown) {
       item.className = 'notification-item';
       let safeUrl;
       try { safeUrl = new URL(event.url); } catch (_) {}
-      if (safeUrl?.protocol === 'https:' && safeUrl.hostname === 'github.com') {
+      if (safeUrl?.protocol === 'https:' &&
+          ((event.source === 'otrs' && safeUrl.origin === otrsOrigin) ||
+           (event.source !== 'otrs' && safeUrl.hostname === 'github.com'))) {
         item.href = safeUrl.href;
         item.target = '_blank';
         item.rel = 'noopener noreferrer';
@@ -125,7 +128,7 @@ if (syncCountdown) {
       const heading = document.createElement('strong');
       heading.textContent = event.title;
       const detail = document.createElement('small');
-      detail.textContent = `${event.repository} · ${event.detail} · ${new Date(event.observed_at).toLocaleString('de-DE')}`;
+      detail.textContent = `${event.source === 'otrs' ? 'OTRS · ' : ''}${event.repository} · ${event.detail} · ${new Date(event.observed_at).toLocaleString('de-DE')}`;
       item.append(heading, detail);
       list.append(item);
     }
@@ -137,10 +140,12 @@ if (syncCountdown) {
     if (before) params.set('before', before);
     const response = await fetch(`/notifications?${params}`, {cache: 'no-store'});
     if (!response.ok) throw new Error('Notifications unavailable');
-    return response.json();
+    const data = await response.json();
+    otrsOrigin = data.otrs_origin;
+    return data;
   };
   const showToast = n => {
-    document.getElementById('notification-toast-text').textContent = countLabel(n) + ' since the last sync';
+    document.getElementById('notification-toast-text').textContent = countLabel(n) + ' since the last update';
     toast.hidden = false;
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => { toast.hidden = true; }, 10000);
@@ -153,7 +158,7 @@ if (syncCountdown) {
         if (panel.hidden) showToast(count);
       } else if ('Notification' in window && Notification.permission === 'granted' && get(keys.desktop) === 'true') {
         try {
-          const notice = new Notification('Dev-Cockpit', {body: countLabel(count) + ' since the last sync', tag: 'gitdash-changes'});
+          const notice = new Notification('Dev-Cockpit', {body: countLabel(count) + ' since the last update', tag: 'gitdash-changes'});
           notice.onclick = () => { window.focus(); openPanel(); notice.close(); };
         } catch (_) {}
       }
@@ -171,7 +176,7 @@ if (syncCountdown) {
       if (get(keys.alerted) === asOf && get(claimKey) === token) {
         if (document.visibilityState === 'visible') { if (panel.hidden) showToast(count); }
         else if ('Notification' in window && Notification.permission === 'granted' && get(keys.desktop) === 'true') {
-          try { new Notification('Dev-Cockpit', {body: countLabel(count) + ' since the last sync', tag: 'gitdash-changes'}); } catch (_) {}
+          try { new Notification('Dev-Cockpit', {body: countLabel(count) + ' since the last update', tag: 'gitdash-changes'}); } catch (_) {}
         }
       }
     }
@@ -193,8 +198,11 @@ if (syncCountdown) {
         if (data.new_count && get(keys.alerted) === alerted &&
             (document.visibilityState === 'visible' || ('Notification' in window && Notification.permission === 'granted' && get(keys.desktop) === 'true'))) {
           const syncResponse = await fetch('/sync/status', {cache: 'no-store'});
-          if (syncResponse.ok && !(await syncResponse.json()).running) {
-            await alertOnce(alerted, data.as_of, data.new_count);
+          if (syncResponse.ok) {
+            const syncState = await syncResponse.json();
+            if (!syncState.running && !syncState.otrs_running) {
+              await alertOnce(alerted, data.as_of, data.new_count);
+            }
           }
         }
       }

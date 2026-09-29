@@ -1,5 +1,6 @@
 .env
 config.yml
+*.swp
 .venv/
 .venv-win/
 instance/

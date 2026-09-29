@@ -28,6 +28,8 @@
       {% for endpoint,label,icon_name in [('issues_page','Issues','circle-dot'),('pulls_page','Pull Requests','git-pull-request'),('releases_page','Releases','tag'),('board','Board','boxes')] %}
       <a class="sidebar-link{% if active_endpoint == endpoint %} is-active{% endif %}" href="{{ url_for(endpoint) }}"{% if active_endpoint == endpoint %} aria-current="page"{% endif %}>{{ icon(icon_name) }}<span>{{ label }}</span></a>
       {% endfor %}
+      {% if otrs_enabled %}<div class="nav-caption nav-caption-secondary">Tickets</div>
+      <a class="sidebar-link{% if active_endpoint == 'tickets_page' %} is-active{% endif %}" href="{{ url_for('tickets_page') }}"{% if active_endpoint == 'tickets_page' %} aria-current="page"{% endif %}>{{ icon('clipboard-list') }}<span>Alle</span></a>{% endif %}
     </nav>
     <div class="sidebar-foot"><div class="source-status"><span class="source-dot"></span><span>GitHub · read-only</span></div><span id="sync-label" class="sync-label" title="Last GitHub sync with at least one successful repository">{% if last_sync %}Last sync {{ last_sync|datetime }}{% else %}Waiting for first sync{% endif %}</span><span id="sync-countdown" class="sync-countdown">Checking next sync…</span></div>
   </aside>

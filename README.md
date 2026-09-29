@@ -1,137 +1,62 @@
 # DevCockpit
 
-**See what is in progress, ready, or needs attention across GitHub repositories without opening each one.**
+A local, read-only dashboard for a team's GitHub work. It brings Issues, Projects v2 status, pull requests, reviews, CI checks, and releases into one place. An optional OTRS 5 integration shows tickets separately. GitHub and OTRS remain the sources of truth; DevCockpit does not edit them.
 
-DevCockpit combines GitHub Issues, Projects v2, pull requests, reviews, CI checks, and releases into a read-only workspace. It shows current work, assigned work that has not started, available work, review requests, failing checks, and recent releases. A compact Brief view is available for quick status conversations.
+![Overview with example data](docs/screenshots/overview.png)
+*Overview with fictional demo data.*
 
-GitHub remains the source of truth. DevCockpit cannot edit issues, pull requests, assignees, priorities, Project fields, or releases. SQLite is a disposable cache for GitHub data and observed changes between syncs.
+## What you need
 
-## Requirements
+- Python 3.10+ and `venv` on Linux/WSL or Windows
+- [GitHub CLI (`gh`)](https://cli.github.com/) installed and signed in with an account that can read your repositories
+- Read access to your GitHub Projects v2 if you want workflow status
 
-- Python 3.10 or newer with `venv` on Linux or Windows (`start.sh` uses Linux `/proc` to restart an existing instance)
-- [GitHub CLI](https://cli.github.com/) (`gh`) installed and authenticated in the operating system where you start DevCockpit
-- Access to `api.github.com`
+No GitHub token or `.env` file is needed. OTRS is optional.
 
-No personal access token or `.env` file is needed. DevCockpit calls `gh api` and `gh api graphql` using your existing CLI login. It does not read or store the CLI's credentials.
-
-## Quick start
+## Start on Linux or WSL
 
 ```bash
 gh auth login
-gh auth status
 cp config.example.yml config.yml
-# Edit config.yml with your own repositories and GitHub Project settings.
+# Edit config.yml: set your GitHub login and replace /example-org/my-app.
 ./start.sh
 ```
 
-Open <http://127.0.0.1:7777>. `start.sh` creates `.venv`, installs dependencies when `requirements.txt` changes, checks the CLI login and configuration file, and starts the app. Re-running it stops a prior DevCockpit instance started from the same directory before starting a new one. Other processes are left alone. Set `HOST` and `PORT` in the process environment if you need a different listener.
+Open [http://127.0.0.1:7777](http://127.0.0.1:7777). The first sync runs in the background. `start.sh` creates a virtual environment and installs dependencies. Run it again after changing `config.yml`; it restarts this checkout's app.
 
-The first full sync runs in the background. The UI shows the last successful sync, a countdown to the next automatic sync, and any repository-specific errors. **Sync now** requests an immediate refresh and restarts the countdown. Automatic syncs begin after the configured interval following completion of the previous sync; they do not overlap. After changing `config.yml`, restart with `./start.sh` to load it, then allow the full sync to finish.
+On Windows, install Python and `gh` for Windows, run `gh auth login`, copy `config.example.yml` to `config.yml`, edit it, then run `start.bat`. Keep its terminal open. Windows and WSL have separate `gh` sign-ins.
 
-### Windows start
+## Configure GitHub
 
-Install Windows Python 3.10 or newer and the Windows GitHub CLI, then run `gh auth login` in a Windows terminal. The Windows login is separate from the WSL login. From a Windows-drive checkout, double-click [`start.bat`](start.bat). It creates `.venv-win`, installs dependencies when `requirements.txt` changes, and starts DevCockpit at <http://127.0.0.1:7777>. Keep the console window open; press Ctrl+C there to stop the server. The Linux `.venv` and Windows `.venv-win` are separate. Set `PORT` in the Windows environment before starting to use another port.
+In your private `config.yml`, set:
 
-This checkout is currently under WSL. On this Windows installation, security policy blocks double-clicking a batch file through `\\wsl.localhost`. To try it from Windows CMD instead, run `pushd \\wsl.localhost\Ubuntu-26.04\home\freilinger\gitdash` followed by `start.bat`. The batch file also maps a UNC project path to a temporary drive letter when invoked directly. Run only one DevCockpit instance against a checkout at a time.
-
-To rebuild the cache from GitHub, stop the app, remove `instance/cockpit.sqlite`, and start again. Observed change history begins anew after a rebuild; current GitHub facts are restored by the full sync.
-
-## Configure repositories and Projects
-
-`config.yml` is your private local configuration and is ignored by Git. Start from [`config.example.yml`](config.example.yml), then replace every example owner, repository path, and GitHub login with your own values. The example repository paths are placeholders, not working demo data. YAML indentation matters: use spaces, not tabs.
-
-| Setting | Meaning |
+| Setting | What to enter |
 | --- | --- |
-| `github.organization` | Default owner for organization Projects; it does not limit which repositories can be listed. |
-| `github.username` | Your GitHub login for the **My Issues** and **My Pull Requests** shortcuts. This is separate from the team list. |
-| `repositories[].name` | Display name, unique within DevCockpit. |
-| `repositories[].url` | Repository path in `/owner/repo` form. |
-| `repositories[].project_number` | Number in the GitHub Project v2 URL for that repository, or `null` when none is used. Different repositories may use different Projects. |
-| `repositories[].project_owner` | Optional owner override for a Project. |
-| `repositories[].project_owner_type` | Set to `user` for a user-owned Project; organization is the default. |
-| `team[].github` / `team[].name` | Exact GitHub login and a display name for a person shown in Team and Brief. Other contributors still appear on issues and PRs. |
-| `sync.interval_seconds` | Seconds after a completed sync before the next automatic sync; default 300, minimum 10. |
+| `repositories[].url` | Each repository as `/owner/repo`. At least one is required. |
+| `repositories[].name` | A unique name shown in DevCockpit. |
+| `github.username` | Your GitHub login for the “My Issues” and “My Pull Requests” shortcuts. |
+| `repositories[].project_number` | The number at the end of a Projects v2 URL, or `null` if this repository has no Project. |
 
-### Repositories and Project ownership
+If you use Projects, make the `workflow.values` match your Project's **exact** Status option names. Set `priority.source` to `project` for a Project field or `issue_field` for an organization Issue Field. Add people under `team` to show their work in Team and Brief. The supplied [`config.example.yml`](config.example.yml) contains these settings with one example repository.
 
-Each entry in `repositories` is synchronized independently. `name` is the label shown in the UI; `url` identifies the actual GitHub repository. Find `project_number` at the end of a Project URL such as `https://github.com/orgs/example-org/projects/7` (number `7`). For a Project owned by a user, also set `project_owner` to that user's login and `project_owner_type: user`. Without those overrides, DevCockpit looks for an organization Project under `github.organization` (or the repository owner if no organization is configured).
+If a Project is unavailable, GitHub may need the `read:project` scope: `gh auth refresh -s read:project`. DevCockpit shows sync errors in the UI.
 
-Use `project_number: null` for a repository without a Project. Its issues, PRs, checks, and releases still sync, but workflow status is unavailable. Adding or changing repositories and Projects requires restarting `./start.sh`; **Sync now** refreshes data using the configuration already loaded by the running process.
+## Optional OTRS tickets
 
-### Workflow mapping
+Remove the comment markers from the `otrs` example in `config.yml`, then enter your own HTTPS URL, agent login, password, and queue IDs. `url` and `queue_ids` are required when OTRS is enabled. Tickets use a separate 15-minute sync and table.
 
-The `workflow` block tells DevCockpit **which GitHub Project field to read** and **how its option names map to the five stages shown in the UI**. It does not create those options or change any Project item.
+Use `excluded_states` to hide closed statuses, `attention_queue_ids` for tickets shown under **Need attention** and in notifications, and `highlight_queue_ids` for emphasized table rows. These lists are empty unless configured. Set `otrs.enabled: false` to stop OTRS and delete its local cache on restart. Keep `config.yml` private.
 
-```yaml
-workflow:
-  status_field: Status
-  values:
-    backlog: Backlog
-    ready: Ready
-    in_progress: In Progress
-    in_review: In Review
-    done: Done
-```
+![Ticket table with example data](docs/screenshots/tickets.png)
+*Optional OTRS view with fictional demo data.*
 
-`status_field` must match the name of the Project's single-select status field. The keys under `values` are DevCockpit's fixed stage identifiers; their values are the **exact, case-sensitive option names in GitHub**. For example, if your Project option says `In progress`, set `in_progress: In progress`. All configured Projects share this one mapping, so their status field and option names need to agree. If they differ, align the GitHub Project options before expecting one combined workflow view.
+## Good to know
 
-Only GitHub's Project status puts an issue in Backlog, Ready, In Progress, In Review, or Done. Assigning someone to an issue does **not** mark it In Progress; opening a PR does **not** mark it In Review. Backlog becomes Ready only when someone changes the Project status in GitHub. An issue outside its configured Project is shown as **Not in project**. A Project item without a status is shown as **No status**. An unreadable Project or field is shown as **Unavailable**, never silently treated as Backlog.
+- GitHub syncs every 5 minutes by default. **Sync now** refreshes GitHub; OTRS syncs independently.
+- The notification bell reports observed GitHub changes and changes in configured OTRS attention queues. Browser alerts are optional and work while the tab is open.
+- DevCockpit has no user login and binds to localhost by default. Do not expose it without access control.
+- `config.yml` and `instance/` are ignored by Git. The SQLite database is a local cache.
 
-### Priority and team
+See the [configuration and feature guide](docs/guide.md) for Project mapping, permissions, views, and troubleshooting.
 
-Set `priority.source` to `project` to read the named Project field, or `issue_field` to read an organization Issue Field. `priority.field` is the exact GitHub field name. DevCockpit never combines those sources or substitutes a local priority. Issues and PRs still sync when a repository has no Project; workflow information is then unavailable. Repository overview pages provide direct links to configured Projects.
-
-Add one `team` entry per person whose work you want in the Team and Brief views. `github` must be the exact GitHub login used as an issue assignee or PR author; `name` is only the display label. The example includes three placeholder members. People omitted from `team` still appear on their issues and PRs, but do not get a person section. Duplicate logins are collapsed. `github.username` above controls only the personal quick filters; add yourself to `team` as well if you want your own person section.
-
-Team also shows open issues assigned to these people in other repositories visible to the authenticated GitHub account. They appear separately as **Other assigned issues** on `/team`, with a count in the Briefing's Team section. Those repositories do not need to be added to `repositories`, and their issues do not affect Project workflow or Board totals. GitHub search refreshes this extra data at most every five minutes; the Team view marks failed or incomplete searches.
-
-## GitHub access
-
-The authenticated `gh` account needs read access to repository metadata, issues, pull requests, contents, checks or commit statuses, Actions, releases, and each configured Project. Organization Projects may require organization approval or the `read:project` scope. If GitHub reports a missing scope, run this yourself and sync again:
-
-```bash
-gh auth refresh -s read:project
-```
-
-DevCockpit does not change CLI authentication or request write permissions. GitHub may return 404 for repositories the account cannot read. A failure for one repository is shown in the UI and does not stop other repositories from syncing.
-
-REST responses with ETags are checked conditionally and reused when GitHub reports no change. If GitHub reports a rate limit, DevCockpit pauses automatic and manual syncs until the retry time, then resumes automatically; the sidebar shows the remaining time. Cached responses and the retry deadline survive restarts on this computer.
-
-## Views
-
-- **Briefing** (`/`): changes since the previous browser visit, **Need attention**, team work, Ready issues, recent GitHub Releases, and repository state.
-- **Brief** (`/brief`): compact overview for a quick conversation. **Copy as prompt** immediately copies the configured prompt followed by the visible Brief facts as plain text; no text panel opens.
-- **Now** (`/now`): open issues explicitly marked In Progress in their GitHub Project.
-- **Team** (`/team`): each person's Now, Review, Ready next, Assigned Backlog, open PRs, and other assigned issues, ordered alphabetically by display name.
-- **Issues** (`/issues`), **Pull Requests** (`/pulls`), and **Releases** (`/releases`): searchable and filterable lists. Filters apply when selections change or typing pauses.
-- **Repositories** (`/repositories`): release, workflow, PR, and attention summary for each repository, with direct links to its GitHub Project.
-- **Board** (`/board`): read-only cross-repository view of Project status, with repository and assignee filters.
-- **Search** (`/search`): search cached issues and PRs.
-
-**Need attention** gives the reason for each item, including Urgent or High priority open issues, review requests, requested changes, and failing CI. PR review and CI states are technical signals separate from Project workflow status. PR age is calculated from the actual GitHub creation timestamp. Issue–PR links use GitHub's closing references, not title matching.
-
-**Recently shipped** shows published GitHub Releases only, by default going back three calendar months. Drafts are excluded and prereleases are marked. Merged PRs are not counted as releases.
-
-**Since your last visit** compares browser visits with changes observed between successful syncs. The visit timestamp is kept in that browser; observations are retained in SQLite for 30 days. You can mark individual changes as done and restore them from the collapsed Completed section. Completion marks are stored in this browser and do not affect the notification bell. It cannot reconstruct changes that appeared and disappeared between syncs.
-
-The **notification bell** shows these observed changes on every page. Its unread count clears when you open the list; changes after a sync also appear as one brief in-app message. You can enable browser alerts from the bell. They appear only while this browser tab remains open in the background, and are grouped into one alert per batch. The browser asks for permission only when you enable them. Notification state is stored in this browser, and the first visit starts without old alerts.
-
-To change the text prepended by **Copy as prompt**, edit [`brief_prompt.txt`](brief_prompt.txt). The file is read when `/brief` is loaded, so refresh the page after editing it. DevCockpit only copies the prompt and data to your clipboard; it does not call an LLM or send the content anywhere.
-
-## Tests
-
-```bash
-.venv/bin/python -m pytest -q
-```
-
-Tests mock GitHub CLI responses and need no authenticated account or private configuration.
-
-## Limits and safety
-
-- DevCockpit has no user login. It binds to localhost by default; use an access-controlled proxy if you expose it to other users.
-- GitHub API permissions and availability determine what the app can show. Missing workflow or priority data is labelled, never guessed.
-- Review state summarizes submitted reviews; it does not reimplement branch protection or merge queue rules. CI shows check and status results without interpreting logs.
-- Large repositories can make a full sync take time. A repository's previous cached data may remain visible when its refresh fails, alongside its error and last successful sync time.
-- Keep `config.yml`, `.env`, and `instance/` private. They are excluded from Git. GitHub avatar images are loaded directly from GitHub in the browser.
-
-The code is released under [CC0 1.0 Universal](LICENSE). Vendored Lucide icons retain their own [license](app/static/LUCIDE-LICENSE.txt).
+Run checks with `.venv/bin/python -m pytest -q`. The code is [CC0](LICENSE); vendored Lucide icons have their own [license](app/static/LUCIDE-LICENSE.txt).

@@ -149,10 +149,46 @@ class ExternalTeamSync(Base):
     incomplete: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
+class OTRSTicket(Base):
+    __tablename__ = "otrs_tickets"
+    number: Mapped[str] = mapped_column(String, primary_key=True)
+    subject: Mapped[str] = mapped_column(Text)
+    queue: Mapped[str] = mapped_column(String, index=True)
+    queue_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    state: Mapped[str] = mapped_column(String, index=True)
+    priority: Mapped[str] = mapped_column(String)
+    owner: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class OTRSSyncState(Base):
+    __tablename__ = "otrs_sync_state"
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    last_attempt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_success: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
+
+
+class OTRSObservedChange(Base):
+    __tablename__ = "otrs_observed_changes"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    number: Mapped[str] = mapped_column(String)
+    queue_id: Mapped[int] = mapped_column(Integer)
+    queue: Mapped[str] = mapped_column(String)
+    kind: Mapped[str] = mapped_column(String)
+    title: Mapped[str] = mapped_column(Text)
+    url: Mapped[str] = mapped_column(String)
+    detail: Mapped[str] = mapped_column(String)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
 def make_session(database_path):
     engine = create_engine(f"sqlite:///{database_path}", connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     with engine.begin() as connection:
         if "body" not in {column["name"] for column in inspect(connection).get_columns("releases")}:
             connection.execute(text("ALTER TABLE releases ADD COLUMN body TEXT"))
+        if "queue_id" not in {column["name"] for column in inspect(connection).get_columns("otrs_tickets")}:
+            connection.execute(text("ALTER TABLE otrs_tickets ADD COLUMN queue_id INTEGER"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_otrs_tickets_queue_id ON otrs_tickets (queue_id)"))
     return sessionmaker(bind=engine, expire_on_commit=False)

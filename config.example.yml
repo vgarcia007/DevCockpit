@@ -1,26 +1,18 @@
+# Copy this file to config.yml. Replace the example repository before starting.
+# config.yml is private and ignored by Git.
 github:
-  # Default owner of organization Projects, not a repository filter.
-  organization: example-org
-  # Used by the "My Issues" and "My Pull Requests" shortcuts.
-  username: your-github-login
+  organization: example-org # Default owner for organization-owned Projects.
+  username: your-github-login # Used by the "My Issues" and "My Pull Requests" shortcuts.
 
 repositories:
-  - name: Example Service
-    url: /example-org/example-service
-    # Replace null with this repository's Project v2 number to enable workflow data.
-    project_number: null
-  - name: Example API
-    url: /example-org/example-api
-    project_number: null
-    # Different repositories may use different Projects.
-    # For a user-owned Project, set project_owner and project_owner_type: user.
+  - name: My App
+    url: /example-org/my-app
+    project_number: null # Set a GitHub Projects v2 number to show workflow status.
+    # For a user-owned Project, also set project_owner and project_owner_type: user.
 
+# Map the exact option names used by your GitHub Projects v2 status field.
 workflow:
-  # The name of the single-select field in each configured GitHub Project v2.
   status_field: Status
-  # Left: DevCockpit stage. Right: exact option name in your GitHub Projects.
-  # This one mapping applies to all configured Projects; names are case-sensitive.
-  # These values are read from GitHub, never assigned or inferred locally.
   values:
     backlog: Backlog
     ready: Ready
@@ -29,19 +21,26 @@ workflow:
     done: Done
 
 priority:
-  # Choose one GitHub source; values from the two sources are never mixed.
-  source: issue_field # Use project for a Project-specific field instead.
+  source: project # Or issue_field for an organization Issue Field.
   field: Priority
 
+# Optional: people shown in Team and Brief.
 team:
-  # List only people you want in Team and Brief; use their exact GitHub logins.
-  # Assignees outside this list still appear on issues and pull requests.
   - github: your-github-login
     name: Your Name
-  - github: teammate-one-login
-    name: Teammate One
-  - github: teammate-two-login
-    name: Teammate Two
 
 sync:
   interval_seconds: 300
+
+# Optional OTRS 5 AgentTicketSearch CSV integration. Replace every example value.
+# Omit this block entirely to disable OTRS.
+# otrs:
+#   enabled: true
+#   url: https://tickets.example.com/
+#   user: your-agent-login
+#   password: your-agent-password
+#   queue_ids: [1, 2]
+#   interval_seconds: 900
+#   excluded_states: [closed]
+#   attention_queue_ids: [1]
+#   highlight_queue_ids: [1]

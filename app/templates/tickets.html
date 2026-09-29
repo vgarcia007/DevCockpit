@@ -1,0 +1,41 @@
+{% extends 'base.html' %}
+{% block title %}Tickets · Dev-Cockpit{% endblock %}
+{% block workbar_title %}Tickets{% endblock %}
+{% block content %}
+<div class="page-heading"><div>
+  <h1 class="page-title">Tickets <span class="page-count">{{ total }}</span></h1>
+  <p>OTRS-Tickets aus den konfigurierten Queues. Ausgeschlossene Status werden in config.yml festgelegt.</p>
+</div></div>
+{% if otrs_state and otrs_state.error %}
+<div class="app-notice is-warning">OTRS-Abgleich fehlgeschlagen: {{ otrs_state.error }}{% if otrs_state.last_success %} · Letzter erfolgreicher Abgleich: {{ otrs_state.last_success|datetime }}{% endif %}</div>
+{% elif otrs_state and otrs_state.last_success %}
+<p class="text-secondary small">Letzter OTRS-Abgleich: {{ otrs_state.last_success|datetime }}</p>
+{% elif otrs_running %}
+<div class="app-notice">Der erste OTRS-Abgleich läuft.</div>
+{% else %}
+<div class="app-notice">Der erste OTRS-Abgleich steht noch aus.</div>
+{% endif %}
+
+<div class="quick-links mb-3"><a href="{{ url_for('tickets_page') }}">Alle Tickets</a>{% for queue in highlight_queues %}<a href="{{ url_for('tickets_page', queue=queue) }}">{{ queue }}</a>{% endfor %}</div>
+<form data-auto-filter method="get" class="filter-row filter-surface">
+  <select name="queue" class="form-select form-select-sm" aria-label="Queue"><option value="">Alle Queues</option>{% for value in queues %}<option value="{{ value }}" {% if request.args.get('queue') == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select>
+  <select name="status" class="form-select form-select-sm" aria-label="Status"><option value="">Alle Status</option>{% for value in statuses %}<option value="{{ value }}" {% if request.args.get('status') == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select>
+  <select name="priority" class="form-select form-select-sm" aria-label="Priorität"><option value="">Alle Prioritäten</option>{% for value in priorities %}<option value="{{ value }}" {% if request.args.get('priority') == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select>
+  <input name="owner" class="form-control form-control-sm" placeholder="Besitzer" aria-label="Besitzer" value="{{ request.args.get('owner', '') }}">
+  <select name="sort" class="form-select form-select-sm" aria-label="Sortierung"><option value="newest">Neueste zuerst</option><option value="oldest" {% if request.args.get('sort') == 'oldest' %}selected{% endif %}>Älteste zuerst</option></select>
+  <input name="q" class="form-control form-control-sm" placeholder="Suche" aria-label="Tickets durchsuchen" value="{{ request.args.get('q', '') }}">
+</form>
+
+<div class="table-responsive panel p-0"><table class="table table-sm table-hover align-middle mb-0">
+  <thead><tr><th>Nummer</th><th>Betreff</th><th>Queue</th><th>Status</th><th>Priorität</th><th>Besitzer</th><th>Erstellt</th></tr></thead>
+  <tbody>{% for ticket in tickets %}
+    <tr{% if ticket.queue_id in highlight_queue_ids %} class="ticket-highlight"{% endif %}>
+      <td><a href="{{ otrs_url }}?Action=AgentTicketZoom;TicketNumber={{ ticket.number|urlencode }}" target="_blank" rel="noopener noreferrer">{{ ticket.number }}</a></td>
+      <td class="table-title"><a href="{{ otrs_url }}?Action=AgentTicketZoom;TicketNumber={{ ticket.number|urlencode }}" target="_blank" rel="noopener noreferrer" title="{{ ticket.subject }}">{{ ticket.subject }}</a></td>
+      <td><span{% if ticket.queue_id in highlight_queue_ids %} class="ticket-highlight-label"{% endif %}>{{ ticket.queue }}</span></td>
+      <td>{{ ticket.state }}</td><td>{{ ticket.priority }}</td><td>{{ ticket.owner or '—' }}</td><td>{{ ticket.created_at|date }}</td>
+    </tr>
+  {% else %}<tr><td colspan="7" class="text-secondary">Keine passenden Tickets</td></tr>{% endfor %}</tbody>
+</table></div>
+{% if pages > 1 %}<nav class="ticket-pagination" aria-label="Ticketseiten"><span>Seite {{ page }} von {{ pages }}</span>{% if page > 1 %}<a href="{{ url_for('tickets_page', page=page-1, **active_filters) }}">Zurück</a>{% endif %}{% if page < pages %}<a href="{{ url_for('tickets_page', page=page+1, **active_filters) }}">Weiter</a>{% endif %}</nav>{% endif %}
+{% endblock %}
