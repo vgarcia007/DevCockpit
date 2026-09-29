@@ -7,7 +7,7 @@ A local, read-only dashboard for a team's GitHub work. It brings Issues, Project
 
 ## What you need
 
-- Python 3.10+ and `venv` on Linux/WSL or Windows
+- Python 3.10+ and `venv` on Linux or WSL
 - [GitHub CLI (`gh`)](https://cli.github.com/) installed and signed in with an account that can read your repositories
 - Read access to your GitHub Projects v2 if you want workflow status
 
@@ -23,8 +23,6 @@ cp config.example.yml config.yml
 ```
 
 Open [http://127.0.0.1:7777](http://127.0.0.1:7777). The first sync runs in the background. `start.sh` creates a virtual environment and installs dependencies. Run it again after changing `config.yml`; it restarts this checkout's app.
-
-On Windows, install Python and `gh` for Windows, run `gh auth login`, copy `config.example.yml` to `config.yml`, edit it, then run `start.bat`. Keep its terminal open. Windows and WSL have separate `gh` sign-ins.
 
 ## Configure GitHub
 
