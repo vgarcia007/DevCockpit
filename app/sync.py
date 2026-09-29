@@ -140,14 +140,48 @@ def search_assigned_issues(client, login_name, get=None):
     return items[:1000], incomplete
 
 
-def issue_field_priority(client, full_name, number, field):
-    values = list(client.pages(f"/repos/{full_name}/issues/{number}/issue-field-values"))
-    for value in values:
-        if value.get("issue_field_name") == field:
-            option = value.get("single_select_option") or {}
-            selected = option.get("name") or value.get("value")
-            return selected, "known" if selected is not None else "no_priority"
-    return None, "no_priority"
+ISSUE_FIELD_VALUES_QUERY = """
+query($ids:[ID!]!) {
+  nodes(ids:$ids) {
+    ... on Issue {
+      id
+      issueFieldValues(first:100) {
+        nodes {
+          ... on IssueFieldSingleSelectValue {
+            name
+            field { ... on IssueFieldSingleSelect { name } }
+          }
+          ... on IssueFieldTextValue {
+            value
+            field { ... on IssueFieldText { name } }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+def issue_field_priorities(client, issues, field):
+    """Read one organization issue field for a batch of GitHub issues."""
+    ids = [issue["node_id"] for issue in issues]
+    nodes = client.graphql(ISSUE_FIELD_VALUES_QUERY, {"ids": ids}).get("nodes")
+    if not isinstance(nodes, list) or len(nodes) != len(ids):
+        raise GitHubError("Unexpected GitHub issue field response")
+    result = {}
+    for node_id, node in zip(ids, nodes):
+        if not isinstance(node, dict) or node.get("id") != node_id:
+            result[node_id] = (None, "unavailable")
+            continue
+        values = (node.get("issueFieldValues") or {}).get("nodes")
+        if not isinstance(values, list):
+            result[node_id] = (None, "unavailable")
+            continue
+        selected = next((value.get("name", value.get("value")) for value in values
+                         if value and (value.get("field") or {}).get("name") == field), None)
+        result[node_id] = (selected, "known" if selected is not None else "no_priority")
+    return result
 
 
 class SyncManager:
@@ -417,18 +451,22 @@ class SyncManager:
             except GitHubError as exc:
                 if isinstance(exc, RateLimitError):
                     raise
-                warnings.append(f"Organization issue fields unavailable: {exc}")
-        issue_rows = []
-        for item in issues:
-            priority, pstate = None, None
-            if self.config["priority"]["source"] == "issue_field" and issue_priority_field_available:
+                if exc.status != 404 or owner.casefold() == self.config.get("github", {}).get("organization", "").casefold():
+                    warnings.append(f"Organization issue fields unavailable: {exc}")
+        issue_priorities = {}
+        if issue_priority_field_available:
+            with_ids = [item for item in issues if item.get("node_id")]
+            for offset in range(0, len(with_ids), 100):
+                batch = with_ids[offset:offset + 100]
                 try:
-                    priority, pstate = issue_field_priority(client, full, item["number"], self.config["priority"]["field"])
+                    issue_priorities.update(issue_field_priorities(client, batch, self.config["priority"]["field"]))
                 except GitHubError as exc:
                     if isinstance(exc, RateLimitError):
                         raise
-                    pstate = "unavailable"
                     warnings.append(f"Issue fields unavailable: {exc}")
+        issue_rows = []
+        for item in issues:
+            priority, pstate = issue_priorities.get(item.get("node_id"), (None, "unavailable"))
             issue_rows.append(issue_data(item, repo["name"], project, project_state, fields, self.config, priority, pstate))
         try:
             relations = related_issues(client, [p for p in pulls if p["state"] == "open"])

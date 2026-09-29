@@ -105,7 +105,7 @@ REST responses with ETags are checked conditionally and reused when GitHub repor
 - **Team** (`/team`): each person's Now, Review, Ready next, Assigned Backlog, open PRs, and other assigned issues, ordered alphabetically by display name.
 - **Issues** (`/issues`), **Pull Requests** (`/pulls`), and **Releases** (`/releases`): searchable and filterable lists. Filters apply when selections change or typing pauses.
 - **Repositories** (`/repositories`): release, workflow, PR, and attention summary for each repository, with direct links to its GitHub Project.
-- **Board** (`/board`): read-only cross-repository view of Project status.
+- **Board** (`/board`): read-only cross-repository view of Project status, with repository and assignee filters.
 - **Search** (`/search`): search cached issues and PRs.
 
 **Need attention** gives the reason for each item, including Urgent or High priority open issues, review requests, requested changes, and failing CI. PR review and CI states are technical signals separate from Project workflow status. PR age is calculated from the actual GitHub creation timestamp. Issue–PR links use GitHub's closing references, not title matching.

@@ -30,7 +30,7 @@ workflow:
 
 priority:
   # Choose one GitHub source; values from the two sources are never mixed.
-  source: project # Use issue_field for an organization Issue Field instead.
+  source: issue_field # Use project for a Project-specific field instead.
   field: Priority
 
 team:

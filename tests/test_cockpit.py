@@ -10,7 +10,7 @@ from sqlalchemy import select
 from app.github import GitHubCliClient, GitHubError, project_items
 from app.changes import detect_changes
 from app.models import ExternalTeamIssue, ExternalTeamSync, Issue, ObservedChange, Pull, Release, Repository, UserAvatar, make_session
-from app.sync import SyncManager, ci_state, issue_data, issue_field_priority, pull_data, review_state, search_assigned_issues
+from app.sync import SyncManager, ci_state, issue_data, issue_field_priorities, pull_data, review_state, search_assigned_issues
 from app.web import age_days, brief_as_text, brief_with_prompt, create_app, github_project_url, latest_releases, published_releases, release_timeline, release_window_start, workflow_readable
 
 
@@ -264,6 +264,56 @@ team:
     assert "No tracked active or assigned work" not in page
 
 
+def test_board_filters_by_person_and_repository(tmp_path):
+    config = tmp_path / "config.yml"
+    config.write_text("""repositories:
+  - name: One
+    url: /acme/one
+  - name: Two
+    url: /acme/two
+team:
+  - github: alice
+    name: Alice
+""", encoding="utf-8")
+    database = tmp_path / "board.sqlite"
+    app = create_app(config_path=config, database_path=database, auto_sync=False)
+    now = datetime.now(timezone.utc)
+    cases = [
+        (1, "One", "Shared work", ["alice", "bob"]),
+        (2, "One", "Open slot", []),
+        (3, "Two", "Other repo", ["alice"]),
+        (4, "One", "Different person", ["malice"]),
+    ]
+    with make_session(database)() as session:
+        for number, repo, title, assignees in cases:
+            session.add(Issue(github_id=number, repository_name=repo, number=number,
+                              title=title, url=f"https://github.com/acme/{repo.lower()}/issues/{number}",
+                              state="open", created_at=now, updated_at=now,
+                              workflow="Ready", workflow_state="known", assignees=assignees))
+        session.commit()
+
+    with app.test_client() as client:
+        page = client.get("/board").get_data(as_text=True)
+        assert 'name="person"' in page
+        assert "Alice (@alice)" in page and "@bob" in page and "@malice" in page
+
+        page = client.get("/board?person=ALICE").get_data(as_text=True)
+        assert "Shared work" in page and "Other repo" in page
+        assert "Different person" not in page and "Open slot" not in page
+        assert '<option value="alice" selected>' in page
+
+        page = client.get("/board?repo=One&person=alice").get_data(as_text=True)
+        assert "Shared work" in page and "Other repo" not in page
+        assert '<option value="One" selected>' in page
+        assert '<option value="alice" selected>' in page
+
+        page = client.get("/board?person=bob").get_data(as_text=True)
+        assert "Shared work" in page and "Other repo" not in page
+
+        page = client.get("/board?person=~unassigned").get_data(as_text=True)
+        assert "Open slot" in page and "Shared work" not in page
+
+
 def test_notifications_count_only_recent_configured_changes_and_paginate(tmp_path):
     config = tmp_path / "config.yml"
     config.write_text("repositories:\n  - name: One\n    url: /acme/one\n", encoding="utf-8")
@@ -395,14 +445,25 @@ def test_cli_uses_login_without_inherited_token_variables(monkeypatch):
     assert json.loads(seen[1][1]["input"])["query"].startswith("query")
 
 
-def test_issue_field_priority_reads_selected_github_option():
-    def runner(args, **kwargs):
-        assert args[2].endswith("/issue-field-values")
-        payload = [{"issue_field_name": "Priority", "value": 42,
-                    "single_select_option": {"name": "High"}}]
-        return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
-    with GitHubCliClient(runner=runner) as client:
-        assert issue_field_priority(client, "acme/one", 10, "Priority") == ("High", "known")
+def test_issue_field_priorities_read_values_and_cleared_fields_in_one_batch():
+    class Fake:
+        def graphql(self, query, variables):
+            assert "issueFieldValues" in query
+            assert variables == {"ids": ["issue-1", "issue-2", "issue-3"]}
+            return {"nodes": [
+                {"id": "issue-1", "issueFieldValues": {"nodes": [
+                    {"name": "High", "field": {"name": "Priority"}},
+                    {"name": "Large", "field": {"name": "Effort"}}]}},
+                {"id": "issue-2", "issueFieldValues": {"nodes": []}},
+                None,
+            ]}
+
+    issues = [{"node_id": f"issue-{number}"} for number in (1, 2, 3)]
+    assert issue_field_priorities(Fake(), issues, "Priority") == {
+        "issue-1": ("High", "known"),
+        "issue-2": (None, "no_priority"),
+        "issue-3": (None, "unavailable"),
+    }
 
 
 def test_project_items_paginate_across_pages():

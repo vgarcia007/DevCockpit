@@ -438,9 +438,23 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
     @app.get("/board")
     def board():
         repos, issues, _, _, meta = snapshot()
-        columns = [(key, label, ordered_issues([i for i in filter_repo(issues) if status(i, key)]))
+        board_issues = [issue for issue in issues if any(status(issue, key) for key in cfg["workflow"]["values"])]
+        team_names = {person["github"].casefold(): person.get("name") or person["github"] for person in cfg["team"]}
+        logins = {login.casefold(): login for issue in board_issues for login in issue.assignees}
+        people = sorted(((login, f"{team_names[key]} (@{login})" if key in team_names else f"@{login}")
+                         for key, login in logins.items()), key=lambda person: person[1].casefold())
+        selected_person = request.args.get("person", "").casefold()
+        if selected_person != "~unassigned" and selected_person not in logins:
+            selected_person = ""
+        visible = filter_repo(board_issues)
+        if selected_person == "~unassigned":
+            visible = [issue for issue in visible if not issue.assignees]
+        elif selected_person:
+            visible = [issue for issue in visible if any(selected_person == login.casefold() for login in issue.assignees)]
+        columns = [(key, label, ordered_issues([i for i in visible if status(i, key)]))
                    for key, label in cfg["workflow"]["values"].items()]
-        return render_template("board.html", **common(repos, meta), columns=columns)
+        return render_template("board.html", **common(repos, meta), columns=columns,
+                               people=people, selected_person=selected_person)
 
     @app.get("/repositories")
     def repositories_page():
