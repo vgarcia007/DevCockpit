@@ -441,3 +441,27 @@ body { font-size:14px; line-height:1.5; background:var(--color-bg); }
 @media(prefers-reduced-motion:reduce) {
   .sidebar-link,.brief-item,.person-line a,.item-line.scan-line,.pulse-row { transition:none; }
 }
+
+.statistics-period { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; padding:12px 16px; }
+.statistics-period>a { display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:650; }
+.statistics-period>div { display:flex; align-items:baseline; gap:10px; text-align:center; }
+.statistics-period>div strong { font-size:15px; }
+.statistics-period>div span,.statistics-period-end,.statistics-freshness { color:var(--color-muted); font-size:11px; }
+.statistics-back-icon { transform:rotate(180deg); }
+.statistics-freshness { margin:0 0 16px; }
+.statistics-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; align-items:start; }
+.statistics-section { min-width:0; padding:17px; }
+.statistics-section h2 { margin:0 0 12px; font-size:17px; }
+.statistics-section h3 { margin:20px 0 6px; font-size:12px; font-weight:680; }
+.statistics-metrics { display:flex; gap:8px; }
+.statistics-metrics>div { min-width:130px; padding:10px 12px; border:1px solid var(--color-border); border-radius:var(--radius-sm); background:var(--color-surface-alt); }
+.statistics-metrics strong { display:block; font-size:27px; line-height:1.1; }
+.statistics-metrics span { color:var(--color-muted); font-size:11px; }
+.statistics-note { margin:10px 0 0; color:var(--color-muted); font-size:11px; }
+.statistics-list { margin:0; padding:0; list-style:none; }
+.statistics-item { display:flex; align-items:center; gap:8px; min-width:0; padding:7px 0; border-top:1px solid var(--color-border); font-size:12px; }
+.statistics-item a { min-width:0; overflow-wrap:anywhere; font-weight:550; }
+.statistics-item time { margin-left:auto; color:var(--color-muted); white-space:nowrap; font-size:11px; }
+.statistics-list .quiet-empty { margin:0; padding:7px 0; }
+@media(max-width:900px) { .statistics-grid { grid-template-columns:1fr; } }
+@media(max-width:600px) { .statistics-period { padding:10px; }.statistics-period>div { display:grid; gap:0; }.statistics-item { flex-wrap:wrap; }.statistics-item time { width:100%; margin-left:0; padding-left:0; } }

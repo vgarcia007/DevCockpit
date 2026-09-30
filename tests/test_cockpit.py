@@ -11,7 +11,7 @@ from app.github import GitHubCliClient, GitHubError, project_items
 from app.changes import detect_changes
 from app.models import ExternalTeamIssue, ExternalTeamSync, Issue, ObservedChange, Pull, Release, Repository, UserAvatar, make_session
 from app.sync import SyncManager, ci_state, issue_data, issue_field_priorities, pull_data, review_state, search_assigned_issues
-from app.web import age_days, brief_as_text, brief_with_prompt, create_app, github_project_url, latest_releases, published_releases, release_timeline, release_window_start, workflow_readable
+from app.web import age_days, brief_as_text, brief_with_prompt, create_app, github_project_url, in_statistics_week, latest_releases, published_releases, release_timeline, release_window_start, statistics_week_bounds, workflow_readable
 
 
 CFG = {
@@ -112,6 +112,21 @@ def test_pr_review_ci_and_age_states():
     assert ci_state({"check_runs": [{"status": "completed", "conclusion": "success"}]}, {"statuses": []}) == "Passing"
     assert ci_state({"check_runs": []}, {"statuses": []}) == "Unknown"
     assert age_days(datetime.now(timezone.utc) - timedelta(days=6, hours=1)) == 6
+
+
+def test_statistics_week_uses_berlin_boundaries_and_iso_week_year():
+    start, end = statistics_week_bounds("2026-W39")
+    assert start.isoformat() == "2026-09-21T00:00:00+02:00"
+    assert end.isoformat() == "2026-09-28T00:00:00+02:00"
+    assert in_statistics_week(datetime(2026, 9, 20, 22), start, end)
+    assert not in_statistics_week(datetime(2026, 9, 20, 21, 59), start, end)
+    assert not in_statistics_week(datetime(2026, 9, 27, 22), start, end)
+    assert statistics_week_bounds("2026-W01")[0].date().isoformat() == "2025-12-29"
+    spring_start, spring_end = statistics_week_bounds("2026-W13")
+    assert spring_start.utcoffset() == timedelta(hours=1)
+    assert spring_end.utcoffset() == timedelta(hours=2)
+    with pytest.raises(ValueError):
+        statistics_week_bounds("2026-W54")
 
 
 def test_pull_filter_can_hide_dependabot_without_hiding_other_authors(tmp_path):

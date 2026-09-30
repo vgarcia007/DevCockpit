@@ -1,0 +1,33 @@
+{% extends 'base.html' %}{% from 'ui.html' import icon %}
+{% block title %}Statistics · Dev-Cockpit{% endblock %}{% block workbar_title %}Statistics{% endblock %}
+{% macro github_row(item, when, label='') %}
+<li class="statistics-item"><span class="repo-tag">{{ item.repository_name }}</span><a href="{{ item.url }}" target="_blank" rel="noopener noreferrer">{% if label %}{{ label }}{% else %}#{{ item.number }} {{ item.title }}{% endif %}</a><time datetime="{{ when.isoformat() }}">{{ when|datetime }}</time></li>
+{% endmacro %}
+{% macro ticket_row(item, when) %}
+<li class="statistics-item"><span class="repo-tag">{{ item.queue }}</span><a href="{{ otrs_url }}?Action=AgentTicketZoom;TicketNumber={{ item.number|urlencode }}" target="_blank" rel="noopener noreferrer">{{ item.number }} · {{ item.subject }}</a><time datetime="{{ when.isoformat() }}">{{ when|datetime }}</time></li>
+{% endmacro %}
+{% block content %}
+<div class="page-heading"><div><h1 class="page-title">Statistics</h1><p>Weekly activity across configured repositories{% if otrs_enabled %} and OTRS queues{% endif %}.</p></div></div>
+<nav class="statistics-period panel" aria-label="Select calendar week">
+  <a href="{{ url_for('statistics_page', week=previous_week) }}" aria-label="Previous week">{{ icon('chevron-right', 'statistics-back-icon') }} Previous</a>
+  <div><strong>Week {{ week[-2:] }}</strong><span>{{ week_start|date }} – {{ week_end|date }}</span></div>
+  {% if next_week %}<a href="{{ url_for('statistics_page', week=next_week) }}" aria-label="Next week">Next {{ icon('chevron-right') }}</a>{% else %}<span class="statistics-period-end">Current week</span>{% endif %}
+</nav>
+<p class="statistics-freshness">GitHub: {% if last_sync %}last successful sync {{ last_sync|datetime }}{% else %}waiting for first sync{% endif %}{% if otrs_enabled %} · OTRS: {% if otrs_sync and otrs_sync.last_success %}last successful sync {{ otrs_sync.last_success|datetime }}{% else %}waiting for first sync{% endif %}{% endif %}. Counts reflect the latest synced records.</p>
+<div class="statistics-grid">
+  <section class="panel statistics-section" aria-labelledby="statistics-issues"><h2 id="statistics-issues">Issues</h2><div class="statistics-metrics"><div><strong>{{ issue_created|length }}</strong><span>Created</span></div><div><strong>{{ issue_closed|length }}</strong><span>Closed</span></div></div>
+    <h3>Created</h3><ul class="statistics-list">{% for item in issue_created %}{{ github_row(item, item.created_at) }}{% else %}<li class="quiet-empty">No issues created this week.</li>{% endfor %}</ul>
+    <h3>Closed</h3><ul class="statistics-list">{% for item in issue_closed %}{{ github_row(item, item.closed_at) }}{% else %}<li class="quiet-empty">No issues closed this week.</li>{% endfor %}</ul>
+  </section>
+  <section class="panel statistics-section" aria-labelledby="statistics-pulls"><h2 id="statistics-pulls">Pull requests</h2><div class="statistics-metrics"><div><strong>{{ pull_merged|length }}</strong><span>Merged</span></div></div>
+    <h3>Merged</h3><ul class="statistics-list">{% for item in pull_merged %}{{ github_row(item, item.merged_at) }}{% else %}<li class="quiet-empty">No pull requests merged this week.</li>{% endfor %}</ul>
+  </section>
+  <section class="panel statistics-section" aria-labelledby="statistics-releases"><h2 id="statistics-releases">Releases</h2><div class="statistics-metrics"><div><strong>{{ released|length }}</strong><span>Published</span></div></div>
+    <h3>Published</h3><ul class="statistics-list">{% for item in released %}{{ github_row(item, item.published_at, item.tag ~ ' · ' ~ (item.name or item.tag)) }}{% else %}<li class="quiet-empty">No releases published this week.</li>{% endfor %}</ul>
+  </section>
+  {% if otrs_enabled %}<section class="panel statistics-section" aria-labelledby="statistics-tickets"><h2 id="statistics-tickets">OTRS tickets</h2><div class="statistics-metrics"><div><strong>{{ ticket_created|length }}</strong><span>Created</span></div><div><strong>{{ ticket_closed|length }}</strong><span>Closed</span></div></div>{% if undated_closed %}<p class="statistics-note">{{ undated_closed }} closed ticket{% if undated_closed != 1 %}s{% endif %} without a closure date cannot be assigned to a week.</p>{% endif %}
+    <h3>Created</h3><ul class="statistics-list">{% for item in ticket_created %}{{ ticket_row(item, item.created_at) }}{% else %}<li class="quiet-empty">No tickets created this week.</li>{% endfor %}</ul>
+    <h3>Closed</h3><ul class="statistics-list">{% for item in ticket_closed %}{{ ticket_row(item, item.closed_at) }}{% else %}<li class="quiet-empty">No tickets closed this week.</li>{% endfor %}</ul>
+  </section>{% endif %}
+</div>
+{% endblock %}

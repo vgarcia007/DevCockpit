@@ -6,13 +6,13 @@ import yaml
 from sqlalchemy import select
 
 from app.config import load_config
-from app.models import ExternalTeamIssue, Issue, OTRSObservedChange, OTRSSyncState, OTRSTicket, ObservedChange, Pull, make_session
+from app.models import ExternalTeamIssue, Issue, OTRSObservedChange, OTRSSyncState, OTRSTicket, OTRSTicketStat, ObservedChange, Pull, Release, make_session
 from app.otrs import OTRSClient, OTRSError, OTRSSyncManager, ResponsibleParser, excluded, parse_csv
 from app.web import create_app
 
 
-CSV = ('"Ticketnummer";"Erstellt";"Status";"Priorität";"Queue";"Besitzer";"Betreff"\n'
-       '"123";"2026-09-28 14:05:00";"open";"3 normal";"Development";"alice";"CSV; subject"\n')
+CSV = ('"Ticketnummer";"Erstellt";"Geschlossen";"Status";"Priorität";"Queue";"Besitzer";"Betreff"\n'
+       '"123";"2026-09-28 14:05:00";"";"open";"3 normal";"Development";"alice";"CSV; subject"\n')
 
 
 def config_file(tmp_path, otrs=None):
@@ -88,6 +88,12 @@ def test_csv_parser_reads_quoted_subject_and_local_creation_time():
     row = parse_csv(CSV.encode())["123"]
     assert row["subject"] == "CSV; subject"
     assert row["created_at"] == datetime(2026, 9, 28, 12, 5)
+    assert row["closed_at"] is None
+    closed_csv = CSV.replace('"2026-09-28 14:05:00";"";',
+                             '"2026-09-28 14:05:00";"2026-09-29 10:30:00";')
+    assert parse_csv(closed_csv.encode())["123"]["closed_at"] == datetime(2026, 9, 29, 8, 30)
+    with pytest.raises(OTRSError, match="columns"):
+        parse_csv(CSV.replace('"Geschlossen";', '').encode())
     with pytest.raises(OTRSError, match="columns"):
         parse_csv(b"<html>login</html>")
 
@@ -294,7 +300,8 @@ def test_sync_observes_entry_change_and_completion_once(tmp_path, monkeypatch):
     def row(number, state="offen", priority="3 normal", queue_id=1):
         return dict(number=number, subject=f"Request {number}", queue=f"Queue {queue_id}",
                     queue_id=queue_id, state=state, priority=priority, owner="alice",
-                    created_at=datetime(2026, 9, 28))
+                    created_at=datetime(2026, 9, 28),
+                    closed_at=datetime(2026, 9, 29) if state == "geschlossen" else None)
 
     snapshots = [
         {"1": row("1"), "2": row("2", queue_id=3)},
@@ -316,6 +323,8 @@ def test_sync_observes_entry_change_and_completion_once(tmp_path, monkeypatch):
             if len(expected) == 4:
                 assert session.get(OTRSTicket, "1") is None
                 assert session.get(OTRSTicket, "2").queue_id == 1
+                assert session.get(OTRSTicketStat, "1").state == "geschlossen"
+                assert session.get(OTRSTicketStat, "1").closed_at == datetime(2026, 9, 29)
     assert "Status offen → neu" in events[0].detail
     assert "Priority 3 normal → 5 very high" in events[0].detail
 
@@ -325,6 +334,8 @@ def test_disabled_otrs_purges_cache_and_needs_no_credentials(tmp_path):
     with make_session(database)() as session:
         session.add(OTRSTicket(number="123", subject="Private", queue="Queue 1", queue_id=1,
                                state="offen", priority="normal", owner="agent", created_at=datetime(2026, 9, 28)))
+        session.add(OTRSTicketStat(number="123", subject="Private", queue="Queue 1", queue_id=1,
+                                   state="offen", created_at=datetime(2026, 9, 28)))
         session.add(OTRSSyncState(key="tickets", last_success=datetime.now(timezone.utc)))
         session.add(OTRSObservedChange(number="123", queue_id=1, queue="Queue 1", kind="otrs_attention",
                                        title="Private", url="https://tickets.example.com/index.pl?Action=AgentTicketZoom;TicketNumber=123",
@@ -339,6 +350,7 @@ def test_disabled_otrs_purges_cache_and_needs_no_credentials(tmp_path):
     assert app.config["OTRS_SYNC_MANAGER"] is None
     with make_session(database)() as session:
         assert session.scalars(select(OTRSTicket)).all() == []
+        assert session.scalars(select(OTRSTicketStat)).all() == []
         assert session.scalars(select(OTRSSyncState)).all() == []
         assert session.scalars(select(OTRSObservedChange)).all() == []
         now = datetime.now(timezone.utc)
@@ -348,6 +360,8 @@ def test_disabled_otrs_purges_cache_and_needs_no_credentials(tmp_path):
             workflow_state="known", priority_state="unavailable"))
         session.commit()
     assert app.test_client().get("/tickets").status_code == 404
+    statistics = app.test_client().get("/statistics")
+    assert statistics.status_code == 200 and b"OTRS tickets" not in statistics.data
     assert b"OTRS tickets" not in app.test_client().get("/").data
     for path in ("/team", "/brief", "/work", "/now", "/search?q=Private"):
         response = app.test_client().get(path)
@@ -357,6 +371,66 @@ def test_disabled_otrs_purges_cache_and_needs_no_credentials(tmp_path):
         if path != "/search?q=Private":
             assert b"GitHub work continues" in response.data
     assert app.test_client().get("/notifications").get_json()["otrs_origin"] is None
+
+
+def test_statistics_combines_weekly_github_and_otrs_activity(tmp_path):
+    database = tmp_path / "statistics.sqlite"
+    config = config_file(tmp_path, {"user": "agent", "password": "secret"})
+    app = create_app(config, database, auto_sync=False)
+    inside = datetime(2026, 9, 20, 22, 0)  # Monday midnight in Berlin
+    before = inside - timedelta(minutes=1)
+    after = datetime(2026, 9, 27, 22, 0)  # Next Monday midnight in Berlin
+    with make_session(database)() as session:
+        for number, title, created, closed, state in (
+            (1, "Issue this week", inside, inside, "closed"),
+            (2, "Issue before week", before, after, "closed"),
+        ):
+            session.add(Issue(github_id=number, repository_name="One", number=number,
+                title=title, url=f"https://github.com/acme/one/issues/{number}",
+                state=state, created_at=created, updated_at=created, closed_at=closed))
+        session.add(Pull(github_id=11, repository_name="One", number=11, title="Dependabot merge",
+            url="https://github.com/acme/one/pull/11", author="dependabot[bot]", draft=False,
+            state="merged", merged=True, created_at=before, updated_at=inside,
+            merged_at=inside, base_branch="main", head_branch="bot", head_sha="abc"))
+        for number, tag, draft in ((21, "v1", False), (22, "draft-v2", True)):
+            session.add(Release(github_id=number, repository_name="One", name=tag, tag=tag,
+                url=f"https://github.com/acme/one/releases/tag/{tag}",
+                created_at=inside, published_at=inside, draft=draft, prerelease=False))
+        for number, subject, queue_id, created, closed, state in (
+            ("100", "Created and closed", 1, inside, inside, "geschlossen"),
+            ("101", "Earlier ticket closed", 1, before, inside, "closed"),
+            ("102", "Other queue", 999, inside, inside, "closed"),
+            ("103", "Undated closed ticket", 1, before, None, "zusammengefasst"),
+        ):
+            session.add(OTRSTicketStat(number=number, subject=subject, queue="Development",
+                queue_id=queue_id, state=state, created_at=created, closed_at=closed))
+        session.add(OTRSSyncState(key="tickets", last_success=inside))
+        session.commit()
+
+    with app.test_client() as client:
+        response = client.get("/statistics?week=2026-W39")
+        assert response.status_code == 200
+        html = response.get_data(as_text=True)
+        assert 'href="/statistics?week=2026-W38"' in html
+        assert 'href="/statistics?week=2026-W40"' in html
+        assert 'href="/statistics?week=2026-W39"' in html or "Week 39" in html
+        issues = html.split('id="statistics-issues"', 1)[1].split("</section>", 1)[0]
+        pulls = html.split('id="statistics-pulls"', 1)[1].split("</section>", 1)[0]
+        releases = html.split('id="statistics-releases"', 1)[1].split("</section>", 1)[0]
+        tickets = html.split('id="statistics-tickets"', 1)[1].split("</section>", 1)[0]
+        assert "Issue this week" in issues and "Issue before week" not in issues
+        assert "<strong>1</strong><span>Created</span>" in issues
+        assert "<strong>1</strong><span>Closed</span>" in issues
+        assert "Dependabot merge" in pulls and "<strong>1</strong><span>Merged</span>" in pulls
+        assert "v1" in releases and "draft-v2" not in releases
+        assert "<strong>1</strong><span>Published</span>" in releases
+        assert "Created and closed" in tickets and "Earlier ticket closed" in tickets
+        assert "Other queue" not in tickets
+        assert "<strong>1</strong><span>Created</span>" in tickets
+        assert "<strong>2</strong><span>Closed</span>" in tickets
+        assert "1 closed ticket without a closure date" in tickets
+        assert "TicketNumber=100" in tickets
+        assert client.get("/statistics?week=2026-W54").status_code == 404
 
 
 def test_notifications_merge_sources_and_paginate(tmp_path):

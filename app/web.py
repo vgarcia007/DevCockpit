@@ -1,4 +1,5 @@
 import logging
+import re
 import unicodedata
 from calendar import month_abbr, monthrange
 from datetime import datetime, timedelta, timezone
@@ -8,7 +9,7 @@ from zoneinfo import ZoneInfo
 from flask import Flask, abort, redirect, render_template, request, url_for, jsonify
 from sqlalchemy import and_, delete, func, or_, select
 from .config import ROOT, load_config
-from .models import ExternalTeamIssue, ExternalTeamSync, Issue, ObservedChange, OTRSObservedChange, OTRSSyncState, OTRSTicket, Pull, Release, Repository, SyncMeta, UserAvatar, make_session
+from .models import ExternalTeamIssue, ExternalTeamSync, Issue, ObservedChange, OTRSObservedChange, OTRSSyncState, OTRSTicket, OTRSTicketStat, Pull, Release, Repository, SyncMeta, UserAvatar, make_session
 from .otrs import OTRSSyncManager
 from .sync import SyncManager
 
@@ -34,6 +35,20 @@ def fmt_date(value):
 
 def fmt_time(value):
     return value.replace(tzinfo=timezone.utc).astimezone(LOCAL_TZ).strftime("%d.%m.%Y %H:%M") if value else "—"
+
+
+def statistics_week_bounds(week):
+    """Return the Berlin calendar-week interval, with an exclusive end."""
+    if not re.fullmatch(r"\d{4}-W\d{2}", week):
+        raise ValueError("Invalid ISO week")
+    start = datetime.strptime(week + "-1", "%G-W%V-%u").replace(tzinfo=LOCAL_TZ)
+    if start.strftime("%G-W%V") != week:
+        raise ValueError("Invalid ISO week")
+    return start, start + timedelta(days=7)
+
+
+def in_statistics_week(value, start, end):
+    return bool(value and start <= value.replace(tzinfo=timezone.utc).astimezone(LOCAL_TZ) < end)
 
 
 def brief_as_text(attention, team, reviews, ready, shipped, cards, last_sync, attention_tickets=None):
@@ -230,6 +245,7 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
     with sessions() as session:
         if not otrs_enabled:
             session.execute(delete(OTRSTicket))
+            session.execute(delete(OTRSTicketStat))
             session.execute(delete(OTRSSyncState))
             session.execute(delete(OTRSObservedChange))
         for existing in session.scalars(select(Repository)).all():
@@ -587,6 +603,48 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
         rows = sorted(filter_repo(releases), key=lambda r: r.published_at or r.created_at, reverse=True)
         return render_template("releases.html", **common(repos, meta), releases=rows,
                                timeline=release_timeline(rows))
+
+    @app.get("/statistics")
+    def statistics_page():
+        current_start, _ = statistics_week_bounds(datetime.now(LOCAL_TZ).strftime("%G-W%V"))
+        week = request.args.get("week") or current_start.strftime("%G-W%V")
+        try:
+            start, end = statistics_week_bounds(week)
+        except ValueError:
+            abort(404)
+        if start > current_start:
+            abort(404)
+        repos, issues, pulls, releases, meta = snapshot()
+        issues = [item for item in issues if item.repository_name in configured]
+        pulls = [item for item in pulls if item.repository_name in configured]
+        releases = [item for item in releases if item.repository_name in configured]
+        def weekly(items, field):
+            return sorted((item for item in items if in_statistics_week(getattr(item, field), start, end)),
+                          key=lambda item: getattr(item, field), reverse=True)
+
+        issue_created = weekly(issues, "created_at")
+        issue_closed = weekly((item for item in issues if item.state == "closed"), "closed_at")
+        pull_merged = weekly((item for item in pulls if item.merged), "merged_at")
+        released = weekly((item for item in releases if not item.draft), "published_at")
+        ticket_created, ticket_closed, otrs_sync, undated_closed = [], [], None, 0
+        if otrs_manager:
+            with sessions() as session:
+                tickets = session.scalars(select(OTRSTicketStat).where(
+                    OTRSTicketStat.queue_id.in_(otrs_config["queue_ids"]))).all()
+                otrs_sync = session.get(OTRSSyncState, "tickets")
+            ticket_created = weekly(tickets, "created_at")
+            closed_states = {state.strip().casefold() for state in otrs_config["excluded_states"]}
+            closed_tickets = [item for item in tickets if item.state.strip().casefold() in closed_states]
+            ticket_closed = weekly(closed_tickets, "closed_at")
+            undated_closed = sum(item.closed_at is None for item in closed_tickets)
+        previous_week = (start - timedelta(days=7)).strftime("%G-W%V")
+        next_week = (start + timedelta(days=7)).strftime("%G-W%V") if start < current_start else None
+        return render_template("statistics.html", **common(repos, meta), week=week,
+            week_start=start, week_end=end - timedelta(days=1), previous_week=previous_week,
+            next_week=next_week, issue_created=issue_created, issue_closed=issue_closed,
+            pull_merged=pull_merged, released=released, ticket_created=ticket_created,
+            ticket_closed=ticket_closed, otrs_sync=otrs_sync, undated_closed=undated_closed,
+            otrs_url=otrs_config["url"].rstrip("/") + "/index.pl" if otrs_manager else None)
 
     @app.get("/board")
     def board():

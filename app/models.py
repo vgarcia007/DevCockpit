@@ -163,6 +163,18 @@ class OTRSTicket(Base):
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
 
 
+class OTRSTicketStat(Base):
+    """Latest complete OTRS queue snapshot for weekly statistics."""
+    __tablename__ = "otrs_ticket_stats"
+    number: Mapped[str] = mapped_column(String, primary_key=True)
+    subject: Mapped[str] = mapped_column(Text)
+    queue: Mapped[str] = mapped_column(String)
+    queue_id: Mapped[int] = mapped_column(Integer)
+    state: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+
+
 class OTRSSyncState(Base):
     __tablename__ = "otrs_sync_state"
     key: Mapped[str] = mapped_column(String, primary_key=True)

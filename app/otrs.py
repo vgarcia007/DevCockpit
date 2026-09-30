@@ -12,11 +12,11 @@ from zoneinfo import ZoneInfo
 import requests
 from sqlalchemy import delete, select
 
-from .models import OTRSObservedChange, OTRSSyncState, OTRSTicket
+from .models import OTRSObservedChange, OTRSSyncState, OTRSTicket, OTRSTicketStat
 
 LOG = logging.getLogger(__name__)
 SEARCH_LIMIT = 2000  # Default OTRS 5 AgentTicketSearch limit.
-CSV_FIELDS = {"Ticketnummer", "Erstellt", "Status", "Priorität", "Queue", "Besitzer", "Betreff"}
+CSV_FIELDS = {"Ticketnummer", "Erstellt", "Geschlossen", "Status", "Priorität", "Queue", "Besitzer", "Betreff"}
 
 
 def excluded(state, config):
@@ -177,7 +177,8 @@ def parse_csv(content):
                                 responsible=(row.get("Verantwortlicher") or row.get("Responsible") or "").strip()
                                 if "Verantwortlicher" in row or "Responsible" in row else None,
                                 responsible_email=None,
-                                created_at=created_at(row["Erstellt"] or ""))
+                                created_at=created_at(row["Erstellt"] or ""),
+                                closed_at=created_at(row["Geschlossen"] or ""))
         return rows
     except (UnicodeError, csv.Error) as exc:
         raise OTRSError("OTRS CSV could not be decoded") from exc
@@ -299,7 +300,12 @@ class OTRSSyncManager:
                 if baseline_exists:
                     session.add_all(detect_ticket_changes(previous, rows, self.config, attempted))
                 session.execute(delete(OTRSTicket))
-                session.add_all(OTRSTicket(**row) for row in active_rows)
+                session.add_all(OTRSTicket(**{key: value for key, value in row.items() if key != "closed_at"})
+                                for row in active_rows)
+                session.execute(delete(OTRSTicketStat))
+                session.add_all(OTRSTicketStat(**{key: row.get(key) for key in
+                    ("number", "subject", "queue", "queue_id", "state", "created_at", "closed_at")})
+                    for row in rows.values())
                 session.execute(delete(OTRSObservedChange).where(
                     OTRSObservedChange.observed_at < attempted - timedelta(days=30)))
                 state.last_attempt = attempted
