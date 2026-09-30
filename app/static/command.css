@@ -448,6 +448,9 @@ body { font-size:14px; line-height:1.5; background:var(--color-bg); }
 .statistics-period>div strong { font-size:15px; }
 .statistics-period>div span,.statistics-period-end,.statistics-freshness { color:var(--color-muted); font-size:11px; }
 .statistics-back-icon { transform:rotate(180deg); }
+.statistics-scope { display:flex; align-items:center; gap:10px; margin:0 0 10px; }
+.statistics-scope label { color:var(--color-muted); font-size:11px; font-weight:650; }
+.statistics-scope select { width:auto; min-width:190px; }
 .statistics-freshness { margin:0 0 16px; }
 .statistics-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; align-items:start; }
 .statistics-section { min-width:0; padding:17px; }

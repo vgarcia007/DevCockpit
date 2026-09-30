@@ -7,12 +7,13 @@
 <li class="statistics-item"><span class="repo-tag">{{ item.queue }}</span><a href="{{ otrs_url }}?Action=AgentTicketZoom;TicketNumber={{ item.number|urlencode }}" target="_blank" rel="noopener noreferrer">{{ item.number }} · {{ item.subject }}</a><time datetime="{{ when.isoformat() }}">{{ when|datetime }}</time></li>
 {% endmacro %}
 {% block content %}
-<div class="page-heading"><div><h1 class="page-title">Statistics</h1><p>Weekly activity across configured repositories{% if otrs_enabled %} and OTRS queues{% endif %}.</p></div></div>
+<div class="page-heading"><div><h1 class="page-title">Statistics</h1><p>Weekly activity across {% if scope == 'all' %}all configured repositories{% else %}configured repositories with projects{% endif %}{% if otrs_enabled %} and OTRS queues{% endif %}.</p></div></div>
 <nav class="statistics-period panel" aria-label="Select calendar week">
-  <a href="{{ url_for('statistics_page', week=previous_week) }}" aria-label="Previous week">{{ icon('chevron-right', 'statistics-back-icon') }} Previous</a>
+  <a href="{{ previous_week_url }}" aria-label="Previous week">{{ icon('chevron-right', 'statistics-back-icon') }} Previous</a>
   <div><strong>Week {{ week[-2:] }}</strong><span>{{ week_start|date }} – {{ week_end|date }}</span></div>
-  {% if next_week %}<a href="{{ url_for('statistics_page', week=next_week) }}" aria-label="Next week">Next {{ icon('chevron-right') }}</a>{% else %}<span class="statistics-period-end">Current week</span>{% endif %}
+  {% if next_week_url %}<a href="{{ next_week_url }}" aria-label="Next week">Next {{ icon('chevron-right') }}</a>{% else %}<span class="statistics-period-end">Current week</span>{% endif %}
 </nav>
+<form data-auto-filter method="get" class="statistics-scope"><input type="hidden" name="week" value="{{ week }}"><label for="statistics-repository-scope">Repositories</label><select id="statistics-repository-scope" name="scope" class="form-select form-select-sm"><option value="projects"{% if scope == 'projects' %} selected{% endif %}>With projects</option><option value="all"{% if scope == 'all' %} selected{% endif %}>All configured repositories</option></select></form>
 <p class="statistics-freshness">GitHub: {% if last_sync %}last successful sync {{ last_sync|datetime }}{% else %}waiting for first sync{% endif %}{% if otrs_enabled %} · OTRS: {% if otrs_sync and otrs_sync.last_success %}last successful sync {{ otrs_sync.last_success|datetime }}{% else %}waiting for first sync{% endif %}{% endif %}. Counts reflect the latest synced records.</p>
 <div class="statistics-grid">
   <section class="panel statistics-section" aria-labelledby="statistics-issues"><h2 id="statistics-issues">Issues</h2><div class="statistics-metrics"><div><strong>{{ issue_created|length }}</strong><span>Created</span></div><div><strong>{{ issue_closed|length }}</strong><span>Closed</span></div></div>

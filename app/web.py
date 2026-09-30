@@ -615,9 +615,12 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
         if start > current_start:
             abort(404)
         repos, issues, pulls, releases, meta = snapshot()
-        issues = [item for item in issues if item.repository_name in configured]
-        pulls = [item for item in pulls if item.repository_name in configured]
-        releases = [item for item in releases if item.repository_name in configured]
+        scope = "all" if request.args.get("scope") == "all" else "projects"
+        selected_repositories = (configured if scope == "all" else
+            {name for name, repo in configured_repositories.items() if repo.get("project_number") is not None})
+        issues = [item for item in issues if item.repository_name in selected_repositories]
+        pulls = [item for item in pulls if item.repository_name in selected_repositories]
+        releases = [item for item in releases if item.repository_name in selected_repositories]
         def weekly(items, field):
             return sorted((item for item in items if in_statistics_week(getattr(item, field), start, end)),
                           key=lambda item: getattr(item, field), reverse=True)
@@ -639,9 +642,12 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
             undated_closed = sum(item.closed_at is None for item in closed_tickets)
         previous_week = (start - timedelta(days=7)).strftime("%G-W%V")
         next_week = (start + timedelta(days=7)).strftime("%G-W%V") if start < current_start else None
-        return render_template("statistics.html", **common(repos, meta), week=week,
-            week_start=start, week_end=end - timedelta(days=1), previous_week=previous_week,
-            next_week=next_week, issue_created=issue_created, issue_closed=issue_closed,
+        scope_args = {"scope": "all"} if scope == "all" else {}
+        return render_template("statistics.html", **common(repos, meta), week=week, scope=scope,
+            week_start=start, week_end=end - timedelta(days=1),
+            previous_week_url=url_for("statistics_page", week=previous_week, **scope_args),
+            next_week_url=url_for("statistics_page", week=next_week, **scope_args) if next_week else None,
+            issue_created=issue_created, issue_closed=issue_closed,
             pull_merged=pull_merged, released=released, ticket_created=ticket_created,
             ticket_closed=ticket_closed, otrs_sync=otrs_sync, undated_closed=undated_closed,
             otrs_url=otrs_config["url"].rstrip("/") + "/index.pl" if otrs_manager else None)

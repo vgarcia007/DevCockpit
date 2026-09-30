@@ -376,6 +376,10 @@ def test_disabled_otrs_purges_cache_and_needs_no_credentials(tmp_path):
 def test_statistics_combines_weekly_github_and_otrs_activity(tmp_path):
     database = tmp_path / "statistics.sqlite"
     config = config_file(tmp_path, {"user": "agent", "password": "secret"})
+    settings = yaml.safe_load(config.read_text(encoding="utf-8"))
+    settings["repositories"][0]["project_number"] = 1
+    settings["repositories"].append({"name": "Other", "url": "/acme/other"})
+    config.write_text(yaml.safe_dump(settings), encoding="utf-8")
     app = create_app(config, database, auto_sync=False)
     inside = datetime(2026, 9, 20, 22, 0)  # Monday midnight in Berlin
     before = inside - timedelta(minutes=1)
@@ -388,14 +392,25 @@ def test_statistics_combines_weekly_github_and_otrs_activity(tmp_path):
             session.add(Issue(github_id=number, repository_name="One", number=number,
                 title=title, url=f"https://github.com/acme/one/issues/{number}",
                 state=state, created_at=created, updated_at=created, closed_at=closed))
+        session.add(Issue(github_id=3, repository_name="Other", number=3,
+            title="Other repository issue", url="https://github.com/acme/other/issues/3",
+            state="closed", created_at=inside, updated_at=inside, closed_at=inside))
         session.add(Pull(github_id=11, repository_name="One", number=11, title="Dependabot merge",
             url="https://github.com/acme/one/pull/11", author="dependabot[bot]", draft=False,
             state="merged", merged=True, created_at=before, updated_at=inside,
             merged_at=inside, base_branch="main", head_branch="bot", head_sha="abc"))
+        session.add(Pull(github_id=12, repository_name="Other", number=12,
+            title="Other repository merge", url="https://github.com/acme/other/pull/12",
+            author="alice", draft=False, state="merged", merged=True,
+            created_at=before, updated_at=inside, merged_at=inside,
+            base_branch="main", head_branch="feature", head_sha="def"))
         for number, tag, draft in ((21, "v1", False), (22, "draft-v2", True)):
             session.add(Release(github_id=number, repository_name="One", name=tag, tag=tag,
                 url=f"https://github.com/acme/one/releases/tag/{tag}",
                 created_at=inside, published_at=inside, draft=draft, prerelease=False))
+        session.add(Release(github_id=23, repository_name="Other", name="Other release", tag="other-v1",
+            url="https://github.com/acme/other/releases/tag/other-v1",
+            created_at=inside, published_at=inside, draft=False, prerelease=False))
         for number, subject, queue_id, created, closed, state in (
             ("100", "Created and closed", 1, inside, inside, "geschlossen"),
             ("101", "Earlier ticket closed", 1, before, inside, "closed"),
@@ -414,15 +429,19 @@ def test_statistics_combines_weekly_github_and_otrs_activity(tmp_path):
         assert 'href="/statistics?week=2026-W38"' in html
         assert 'href="/statistics?week=2026-W40"' in html
         assert 'href="/statistics?week=2026-W39"' in html or "Week 39" in html
+        assert '<option value="projects" selected>With projects</option>' in html
         issues = html.split('id="statistics-issues"', 1)[1].split("</section>", 1)[0]
         pulls = html.split('id="statistics-pulls"', 1)[1].split("</section>", 1)[0]
         releases = html.split('id="statistics-releases"', 1)[1].split("</section>", 1)[0]
         tickets = html.split('id="statistics-tickets"', 1)[1].split("</section>", 1)[0]
         assert "Issue this week" in issues and "Issue before week" not in issues
+        assert "Other repository issue" not in issues
         assert "<strong>1</strong><span>Created</span>" in issues
         assert "<strong>1</strong><span>Closed</span>" in issues
         assert "Dependabot merge" in pulls and "<strong>1</strong><span>Merged</span>" in pulls
+        assert "Other repository merge" not in pulls
         assert "v1" in releases and "draft-v2" not in releases
+        assert "Other release" not in releases
         assert "<strong>1</strong><span>Published</span>" in releases
         assert "Created and closed" in tickets and "Earlier ticket closed" in tickets
         assert "Other queue" not in tickets
@@ -430,6 +449,16 @@ def test_statistics_combines_weekly_github_and_otrs_activity(tmp_path):
         assert "<strong>2</strong><span>Closed</span>" in tickets
         assert "1 closed ticket without a closure date" in tickets
         assert "TicketNumber=100" in tickets
+        all_repositories = client.get("/statistics?week=2026-W39&scope=all").get_data(as_text=True)
+        assert '<option value="all" selected>All configured repositories</option>' in all_repositories
+        assert 'href="/statistics?week=2026-W38&amp;scope=all"' in all_repositories
+        assert 'href="/statistics?week=2026-W40&amp;scope=all"' in all_repositories
+        assert "Other repository issue" in all_repositories
+        assert "Other repository merge" in all_repositories
+        assert "Other release" in all_repositories
+        assert "<strong>2</strong><span>Closed</span>" in all_repositories
+        assert "<strong>2</strong><span>Published</span>" in all_repositories
+        assert "TicketNumber=100" in all_repositories
         assert client.get("/statistics?week=2026-W54").status_code == 404
 
 
