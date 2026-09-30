@@ -573,6 +573,8 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
                 rows = [p for p in rows if value.lower() in fn(p).lower()]
         if request.args.get("draft") in ("0", "1"):
             rows = [p for p in rows if p.draft == (request.args["draft"] == "1")]
+        if request.args.get("hide_dependabot") == "1":
+            rows = [p for p in rows if (p.author or "").lower() not in ("dependabot[bot]", "dependabot")]
         q = request.args.get("q", "").lower().strip()
         if q:
             rows = [p for p in rows if q in " ".join([p.repository_name, str(p.number), p.title, p.author or "", *p.assignees, *p.requested_reviewers]).lower()]

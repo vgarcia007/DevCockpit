@@ -114,6 +114,42 @@ def test_pr_review_ci_and_age_states():
     assert age_days(datetime.now(timezone.utc) - timedelta(days=6, hours=1)) == 6
 
 
+def test_pull_filter_can_hide_dependabot_without_hiding_other_authors(tmp_path):
+    config = tmp_path / "config.yml"
+    config.write_text("""github:
+  organization: acme
+  username: alice
+repositories:
+  - name: One
+    url: /acme/one
+team:
+  - github: alice
+    name: Alice
+""", encoding="utf-8")
+    database = tmp_path / "pulls.sqlite"
+    app = create_app(config_path=config, database_path=database, auto_sync=False)
+    now = datetime.now(timezone.utc)
+    with make_session(database)() as session:
+        for number, author, title in ((1, "alice", "Human update"),
+                                      (2, "dependabot[bot]", "Dependency update"),
+                                      (3, "dependabot-helper", "Helper update")):
+            session.add(Pull(github_id=number, repository_name="One", number=number,
+                             title=title, url=f"https://github.com/acme/one/pull/{number}",
+                             author=author, draft=False, state="open", merged=False,
+                             created_at=now, updated_at=now, base_branch="main",
+                             head_branch="work", head_sha=str(number)))
+        session.commit()
+
+    with app.test_client() as client:
+        default = client.get("/pulls").get_data(as_text=True)
+        assert all(title in default for title in ("Human update", "Dependency update", "Helper update"))
+        hidden = client.get("/pulls?hide_dependabot=1").get_data(as_text=True)
+        assert "Dependency update" not in hidden
+        assert "Human update" in hidden and "Helper update" in hidden
+        assert '<option value="1" selected>Hide Dependabot</option>' in hidden
+        assert "Human update" in client.get("/pulls?hide_dependabot=1&author=alice").get_data(as_text=True)
+
+
 def test_merged_pull_is_stored_as_merged():
     payload = {"id": 20, "number": 20, "title": "Merged work", "body": None,
         "html_url": "https://github.com/acme/one/pull/20", "state": "closed",
