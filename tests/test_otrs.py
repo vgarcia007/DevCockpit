@@ -6,8 +6,8 @@ import yaml
 from sqlalchemy import select
 
 from app.config import load_config
-from app.models import OTRSObservedChange, OTRSSyncState, OTRSTicket, ObservedChange, make_session
-from app.otrs import OTRSClient, OTRSError, OTRSSyncManager, excluded, parse_csv
+from app.models import ExternalTeamIssue, Issue, OTRSObservedChange, OTRSSyncState, OTRSTicket, ObservedChange, Pull, make_session
+from app.otrs import OTRSClient, OTRSError, OTRSSyncManager, ResponsibleParser, excluded, parse_csv
 from app.web import create_app
 
 
@@ -72,12 +72,75 @@ def test_otrs_optional_queue_rules_default_to_empty(tmp_path):
     assert settings["excluded_states"] == []
 
 
+def test_responsible_parser_ignores_popup_details_and_reads_email():
+    html = ('<div id="TicketInfo"><fieldset><label>Verantwortlicher:</label><p class="Value">'
+            'Jane Example <span>⌕</span><div id="ResponsibleDetails"><fieldset>'
+            '<label>Vorname:</label><p class="Value">Jane</p>'
+            '<label>E-Mail:</label><p class="Value">jane@example.com</p>'
+            '</fieldset></div></p></fieldset></div>')
+    parser = ResponsibleParser()
+    parser.feed(html)
+    assert parser.responsible == "Jane Example ⌕"
+    assert parser.email == "jane@example.com"
+
+
 def test_csv_parser_reads_quoted_subject_and_local_creation_time():
     row = parse_csv(CSV.encode())["123"]
     assert row["subject"] == "CSV; subject"
     assert row["created_at"] == datetime(2026, 9, 28, 12, 5)
     with pytest.raises(OTRSError, match="columns"):
         parse_csv(b"<html>login</html>")
+
+
+def test_work_page_matches_assignee_and_both_otrs_roles(tmp_path):
+    path = config_file(tmp_path, {"user": "agent", "password": "secret"})
+    settings = yaml.safe_load(path.read_text(encoding="utf-8"))
+    settings["github"] = {"username": "alice"}
+    settings["team"] = [{"github": "alice", "name": "Alice", "otrs_user": "alice"},
+                        {"github": "bob", "name": "Bob", "otrs_user": "bob"}]
+    path.write_text(yaml.safe_dump(settings), encoding="utf-8")
+    database = tmp_path / "work.sqlite"
+    app = create_app(path, database, auto_sync=False)
+    now = datetime.now(timezone.utc)
+    with make_session(database)() as session:
+        for number, assignees, title in [(1, ["alice"], "Alice issue"),
+                                          (2, ["bob"], "Bob issue"),
+                                          (3, ["alice"], "Closed issue")]:
+            session.add(Issue(github_id=number, repository_name="One", number=number, title=title,
+                url=f"https://github.com/acme/one/issues/{number}", state="closed" if number == 3 else "open",
+                assignees=assignees, labels=[], created_at=now, updated_at=now,
+                workflow_state="unavailable", priority_state="unavailable"))
+        session.add(ExternalTeamIssue(login="alice", github_id=10, repository_name="acme/practice",
+            number=10, title="Outside issue", url="https://github.com/acme/practice/issues/10", updated_at=now))
+        for number, author, reviewers, title in [(11, "alice", [], "Alice PR"),
+                                                  (12, "bob", ["alice"], "Review PR")]:
+            session.add(Pull(github_id=number, repository_name="One", number=number, title=title,
+                url=f"https://github.com/acme/one/pull/{number}", author=author,
+                assignees=[], requested_reviewers=reviewers, reviews=[], draft=False, state="open",
+                merged=False, created_at=now, updated_at=now, base_branch="main", head_branch="feature",
+                head_sha="abc"))
+        session.add_all([
+            OTRSTicket(number="100", subject="Alice owns", queue="Support", state="open",
+                priority="normal", owner=" Alice ", responsible="Somebody Else", created_at=now),
+            OTRSTicket(number="101", subject="Alice responsible", queue="Support", state="open",
+                priority="normal", owner="bob", responsible="Jane Example",
+                responsible_email="alice@example.com", created_at=now),
+            OTRSTicket(number="102", subject="Bob only", queue="Support", state="open",
+                priority="normal", owner="bob", responsible="Jane Example",
+                responsible_email="jane@example.com", created_at=now),
+        ])
+        session.commit()
+    client = app.test_client()
+    own = client.get("/work")
+    assert own.status_code == 200
+    for title in ("Alice issue", "Outside issue", "Alice PR", "Review PR", "Alice owns", "Alice responsible"):
+        assert title.encode() in own.data
+    for title in ("Bob issue", "Closed issue", "Bob only"):
+        assert title.encode() not in own.data
+    bob = client.get("/work?person=bob")
+    assert b"Bob issue" in bob.data and b"Bob only" in bob.data
+    assert b"Alice issue" not in bob.data
+    assert client.get("/work?person=unknown").status_code == 404
 
 
 def test_client_uses_agent_session_and_csv_without_saving_profile():
@@ -92,18 +155,27 @@ def test_client_uses_agent_session_and_csv_without_saving_profile():
 
         def get(self, url, params, timeout):
             calls.append(("get", params))
+            if params.get("Action") == "AgentTicketZoom":
+                return SimpleNamespace(text=('<div id="TicketInfo"><label>Verantwortlicher:</label>'
+                    '<p class="Value">Jane Example<div id="ResponsibleDetails"><label>E-Mail:</label>'
+                    '<p class="Value">jane@example.com</p></div></p></div>'), raise_for_status=lambda: None)
             return SimpleNamespace(text='<input name="ChallengeToken" value="fresh">', raise_for_status=lambda: None)
 
         def close(self):
             pass
 
     client = OTRSClient({"url": "https://example.org/", "user": "agent", "password": "secret",
-                         "queue_ids": [1, 3, 4, 2]}, FakeSession())
-    assert len(client.fetch_all()) == 1
+                         "queue_ids": [1, 3, 4, 2], "excluded_states": []}, FakeSession(),
+                        include_responsible=True)
+    rows = client.fetch_all()
+    assert len(rows) == 1
+    assert rows["123"]["responsible"] == "Jane Example"
+    assert rows["123"]["responsible_email"] == "jane@example.com"
     searches = [data for method, data in calls if method == "post" and data.get("ResultForm") == "CSV"]
     assert [data["QueueIDs"] for data in searches] == ["1", "3", "4", "2"]
     assert all(data["ChallengeToken"] == "fresh" and "SaveProfile" not in data and "StateIDs" not in data
                for data in searches)
+    assert sum(params.get("Action") == "AgentTicketZoom" for method, params in calls if method == "get") == 1
 
 
 def test_client_returns_terminal_states_for_change_detection():
@@ -155,7 +227,8 @@ def test_ticket_filters_search_highlight_and_links(tmp_path):
                                    created_at=datetime(2026, 9, 1)) for index in range(54))
         session.add(OTRSTicket(number="99999", subject="Special portal request",
                                queue="Support::Portal", queue_id=1, state="neu", priority="5 very high",
-                               owner="alice", created_at=datetime(2026, 9, 28)))
+                               owner="alice", responsible="Jane Example", responsible_email="jane@example.com",
+                               created_at=datetime(2026, 9, 28)))
         session.commit()
     client = app.test_client()
     page = client.get("/tickets")
@@ -165,7 +238,7 @@ def test_ticket_filters_search_highlight_and_links(tmp_path):
     assert b'href="https://tickets.example.com/index.pl?Action=AgentTicketZoom;TicketNumber=99999" target="_blank"' in page.data
     assert client.get("/tickets?page=2").status_code == 200
     for query in ("queue=Support%3A%3APortal", "status=neu", "priority=5+very+high",
-                  "owner=ALICE", "q=99999", "q=portal"):
+                  "owner=ALICE", "responsible=JANE", "q=jane%40example.com", "q=99999", "q=portal"):
         result = client.get("/tickets?" + query)
         assert result.status_code == 200
         assert b"Special portal request" in result.data

@@ -75,6 +75,78 @@ class ChallengeTokenParser(HTMLParser):
                 self.token = attributes.get("value")
 
 
+class ResponsibleParser(HTMLParser):
+    """Read the responsible agent from the TicketInfo sidebar on AgentTicketZoom."""
+    VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
+
+    def __init__(self):
+        super().__init__()
+        self.stack = []
+        self.in_label = False
+        self.label_text = []
+        self.in_popup_label = False
+        self.popup_label_text = []
+        self.expect_value = False
+        self.expect_email = False
+        self.value_depth = None
+        self.value_text = []
+        self.email_depth = None
+        self.email_text = []
+        self.responsible = None
+        self.email = None
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        if tag not in self.VOID_TAGS:
+            self.stack.append((tag, attributes))
+        in_ticket_info = any(node.get("id") == "TicketInfo" for _, node in self.stack)
+        in_popup = any(node.get("id") == "ResponsibleDetails" for _, node in self.stack)
+        if in_popup and tag == "label":
+            self.in_popup_label = True
+            self.popup_label_text = []
+        elif in_ticket_info and tag == "label":
+            self.in_label = True
+            self.label_text = []
+        if in_popup and self.expect_email and tag == "p" and "Value" in attributes.get("class", "").split():
+            self.email_depth = len(self.stack)
+            self.email_text = []
+        elif in_ticket_info and not in_popup and self.expect_value and tag == "p" and "Value" in attributes.get("class", "").split():
+            self.value_depth = len(self.stack)
+            self.value_text = []
+
+    def handle_endtag(self, tag):
+        if self.in_label and tag == "label":
+            label = " ".join(self.label_text).strip().rstrip(":").casefold()
+            self.expect_value = label in ("verantwortlicher", "responsible")
+            self.in_label = False
+        if self.in_popup_label and tag == "label":
+            label = " ".join(self.popup_label_text).strip().rstrip(":").casefold()
+            self.expect_email = label in ("e-mail", "email")
+            self.in_popup_label = False
+        if self.email_depth == len(self.stack) and tag == "p":
+            self.email = " ".join(" ".join(self.email_text).split())
+            self.email_depth = None
+            self.expect_email = False
+        if self.value_depth == len(self.stack) and tag == "p":
+            self.responsible = " ".join(" ".join(self.value_text).split())
+            self.value_depth = None
+            self.expect_value = False
+        for index in range(len(self.stack) - 1, -1, -1):
+            if self.stack[index][0] == tag:
+                del self.stack[index:]
+                break
+
+    def handle_data(self, data):
+        if self.in_label:
+            self.label_text.append(data)
+        if self.in_popup_label:
+            self.popup_label_text.append(data)
+        if self.value_depth is not None and not any(node.get("id") == "ResponsibleDetails" for _, node in self.stack):
+            self.value_text.append(data)
+        if self.email_depth is not None:
+            self.email_text.append(data)
+
+
 def created_at(value):
     value = value.strip()
     if not value:
@@ -102,6 +174,9 @@ def parse_csv(content):
             rows[number] = dict(number=number, subject=row["Betreff"] or "",
                                 queue=row["Queue"] or "", state=row["Status"] or "",
                                 priority=row["Priorität"] or "", owner=row["Besitzer"] or "",
+                                responsible=(row.get("Verantwortlicher") or row.get("Responsible") or "").strip()
+                                if "Verantwortlicher" in row or "Responsible" in row else None,
+                                responsible_email=None,
                                 created_at=created_at(row["Erstellt"] or ""))
         return rows
     except (UnicodeError, csv.Error) as exc:
@@ -109,9 +184,10 @@ def parse_csv(content):
 
 
 class OTRSClient:
-    def __init__(self, config, session=None):
+    def __init__(self, config, session=None, include_responsible=False):
         self.config = config
         self.session = session or requests.Session()
+        self.include_responsible = include_responsible
         self.url = urljoin(config["url"].rstrip("/") + "/", "index.pl")
         self.token = None
 
@@ -156,6 +232,15 @@ class OTRSClient:
         return {**self.all_in_queue(queue_id, start, midpoint),
                 **self.all_in_queue(queue_id, midpoint + timedelta(days=1), stop)}
 
+    def ticket_responsible(self, number):
+        response = self.session.get(self.url, params={"Action": "AgentTicketZoom", "TicketNumber": number}, timeout=30)
+        response.raise_for_status()
+        parser = ResponsibleParser()
+        parser.feed(response.text)
+        if parser.responsible is None:
+            raise OTRSError("OTRS ticket detail did not include a responsible agent")
+        return parser.responsible, parser.email
+
     def fetch_all(self):
         try:
             self.login()
@@ -163,15 +248,20 @@ class OTRSClient:
             for queue_id in self.config["queue_ids"]:
                 for number, row in self.all_in_queue(queue_id).items():
                     rows[number] = {**row, "queue_id": queue_id}
+            if self.include_responsible:
+                for number, row in rows.items():
+                    if not excluded(row["state"], self.config) and row["responsible"] is None:
+                        row["responsible"], row["responsible_email"] = self.ticket_responsible(number)
             return rows
         finally:
             self.session.close()
 
 
 class OTRSSyncManager:
-    def __init__(self, sessions, config):
+    def __init__(self, sessions, config, include_responsible=False):
         self.sessions = sessions
         self.config = config
+        self.include_responsible = include_responsible
         self.lock = threading.Lock()
         self.timer = None
         self.scheduler_enabled = False
@@ -200,7 +290,7 @@ class OTRSSyncManager:
     def _run(self):
         attempted = datetime.now(timezone.utc)
         try:
-            rows = OTRSClient(self.config).fetch_all()
+            rows = OTRSClient(self.config, include_responsible=self.include_responsible).fetch_all()
             active_rows = [row for row in rows.values() if not excluded(row["state"], self.config)]
             with self.sessions() as session:
                 state = session.get(OTRSSyncState, "tickets") or OTRSSyncState(key="tickets")

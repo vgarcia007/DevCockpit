@@ -25,6 +25,8 @@ Set `priority.source: project` to read a Project field, or `priority.source: iss
 
 Add people under `team` to show their work in Team and Brief. Use their exact GitHub login. Team also lists issues assigned to them in other repositories visible to your `gh` account; you do not need to add those repositories to `repositories`. Those issues stay separate from the configured Project workflow and Board totals. `github.username` controls the personal quick filters; add yourself to `team` separately if you want a person section.
 
+**My work** (`/work`) opens with `github.username` and can show any configured team member. It lists open assigned issues from configured and other accessible repositories, open PRs created by or assigned to the person, requested reviews, and matching OTRS tickets. To map tickets, add `otrs_user` to each relevant `team` entry. The value matches the OTRS **Besitzer** (owner), **Verantwortlicher** (responsible) name or email address, or the part of the responsible email before `@`. Add your own GitHub login to `team` with `otrs_user` if you want your tickets in My work.
+
 ## GitHub access and sync
 
 DevCockpit uses your local `gh` login to read repositories, issues, pull requests, checks, releases, and configured Projects. It uses `gh api` and `gh api graphql`; there is no separate GitHub token in `config.yml`. A missing Project scope may require `gh auth refresh -s read:project`. Repository-specific sync errors appear in the UI.
@@ -38,6 +40,8 @@ To rebuild the local GitHub cache, stop the app, delete `instance/cockpit.sqlite
 Add the commented `otrs` block from the example configuration and replace every example value. `enabled`, `url`, `user`, `password`, and `queue_ids` control access. The URL must use HTTPS. `queue_ids` is a nonempty list of numeric OTRS queue IDs. The integration uses an agent session and the AgentTicketSearch CSV export. It does not save a search profile.
 
 `excluded_states` lists ticket status names to hide, ignoring case and surrounding spaces. Set this to the terminal states used by your installation. `attention_queue_ids` selects configured queues whose open tickets appear on the Overview and in notifications. `highlight_queue_ids` selects configured queues to emphasize in the ticket table. Both lists are empty by default. OTRS syncs independently every `otrs.interval_seconds` (default: 900 seconds; minimum: 60). Set `otrs.enabled: false` or remove the block to disable the integration; its cached tickets and OTRS notifications are cleared on restart.
+
+When `otrs_user` mappings are configured, My work also reads the responsible agent for active tickets. If the OTRS CSV export has a **Verantwortlicher** or **Responsible** column, it uses that. Otherwise, it reads each active ticket's detail page. An OTRS administrator can add `Responsible` to `Ticket::Frontend::AgentTicketSearch###SearchCSVData` to avoid those extra detail requests.
 
 The Tickets section is visible only when OTRS is enabled. It has its own table, search, filters, and ticket links. Ticket data is not included in the GitHub Issues, Board, or Team views.
 

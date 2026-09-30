@@ -158,6 +158,8 @@ class OTRSTicket(Base):
     state: Mapped[str] = mapped_column(String, index=True)
     priority: Mapped[str] = mapped_column(String)
     owner: Mapped[str] = mapped_column(String)
+    responsible: Mapped[str | None] = mapped_column(String)
+    responsible_email: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
 
 
@@ -191,4 +193,8 @@ def make_session(database_path):
         if "queue_id" not in {column["name"] for column in inspect(connection).get_columns("otrs_tickets")}:
             connection.execute(text("ALTER TABLE otrs_tickets ADD COLUMN queue_id INTEGER"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_otrs_tickets_queue_id ON otrs_tickets (queue_id)"))
+        if "responsible" not in {column["name"] for column in inspect(connection).get_columns("otrs_tickets")}:
+            connection.execute(text("ALTER TABLE otrs_tickets ADD COLUMN responsible VARCHAR"))
+        if "responsible_email" not in {column["name"] for column in inspect(connection).get_columns("otrs_tickets")}:
+            connection.execute(text("ALTER TABLE otrs_tickets ADD COLUMN responsible_email VARCHAR"))
     return sessionmaker(bind=engine, expire_on_commit=False)

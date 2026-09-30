@@ -1,0 +1,27 @@
+{% extends 'base.html' %}
+{% from 'macros.html' import issue_line, pull_line %}
+{% from 'ui.html' import avatar, icon %}
+{% block title %}My work · Dev-Cockpit{% endblock %}
+{% block workbar_title %}My work{% endblock %}
+{% block content %}
+<div class="mode-page work-page">
+  <header class="mode-intro work-intro">
+    <div><div class="eyebrow">Personal view</div><h1>{% if person and person.github|lower == own_login|lower %}My work{% else %}Team member's work{% endif %}</h1><p>Open GitHub work and OTRS tickets assigned to one person.</p></div>
+    {% if people %}<form method="get" data-auto-filter><label for="work-person">Person</label><select id="work-person" name="person" class="form-select form-select-sm"><option value="" {% if not person %}selected{% endif %}>Choose a person</option>{% for option in people %}<option value="{{ option.github }}" {% if person and option.github|lower == person.github|lower %}selected{% endif %}>{{ option.name }} (@{{ option.github }}){% if option.github|lower == own_login|lower %} · me{% endif %}</option>{% endfor %}</select></form>{% endif %}
+  </header>
+  {% if not person %}<div class="app-notice">Set <code>github.username</code> in config.yml, or choose a configured team member above.</div>{% else %}
+  <div class="work-person">{{ avatar(person.github, avatars, 'avatar-xl') }}<div><strong>{{ person.name }}</strong><span>@{{ person.github }}</span></div></div>
+  <div class="work-summary"><span><strong>{{ issues|length + external|length }}</strong> assigned issues</span><span><strong>{{ authored|length }}</strong> own or assigned PRs</span><span><strong>{{ reviews|length }}</strong> review requests</span>{% if otrs_enabled %}<span><strong>{{ tickets|length }}</strong> OTRS tickets</span>{% endif %}</div>
+
+  <section class="work-section"><header><h2>Assigned issues <span>{{ issues|length }}</span></h2><p>Open issues in configured repositories, regardless of Project status.</p></header><div class="work-list">{% for issue in issues %}{{ issue_line(issue) }}{% else %}<p class="quiet-empty">No assigned issues in configured repositories.</p>{% endfor %}</div></section>
+
+  <section class="work-section"><header><h2>Other assigned issues <span>{{ external|length }}</span></h2><p>Open issues in other repositories visible to the GitHub account.</p></header><div class="work-list">{% for issue in external %}<a class="item-line scan-line" href="{{ issue.url }}" target="_blank" rel="noopener noreferrer" title="{{ issue.title }}"><span class="repo-tag">{{ issue.repository_name }}</span><span class="item-number">#{{ issue.number }}</span><span class="item-title">{{ issue.title }}</span>{{ icon('arrow-up-right') }}</a>{% else %}<p class="quiet-empty">No other assigned issues found.</p>{% endfor %}</div>{% if external_sync and (external_sync.error or external_sync.incomplete) %}<p class="work-note warning-text">GitHub's search results may be incomplete or outdated.</p>{% elif not external_sync %}<p class="work-note">Other repositories have not been checked for this person yet.</p>{% endif %}</section>
+
+  <section class="work-section"><header><h2>Own or assigned pull requests <span>{{ authored|length }}</span></h2><p>Open PRs created by this person or assigned to them.</p></header><div class="work-list">{% for pull in authored %}{{ pull_line(pull) }}{% else %}<p class="quiet-empty">No open pull requests.</p>{% endfor %}</div></section>
+
+  <section class="work-section"><header><h2>Requested reviews <span>{{ reviews|length }}</span></h2><p>Open PRs awaiting this person's review.</p></header><div class="work-list">{% for pull in reviews %}{{ pull_line(pull) }}{% else %}<p class="quiet-empty">No requested reviews.</p>{% endfor %}</div></section>
+
+  {% if otrs_enabled %}<section class="work-section"><header><h2>OTRS tickets <span>{{ tickets|length }}</span></h2><p>Tickets whose owner matches this person's configured <code>otrs_user</code>.</p></header>{% if otrs_state and otrs_state.error %}<p class="work-note warning-text">OTRS sync failed; cached tickets may be outdated.</p>{% endif %}{% if person.otrs_user %}<div class="work-list">{% for ticket in tickets %}<a class="item-line scan-line" href="{{ otrs_url }}?Action=AgentTicketZoom;TicketNumber={{ ticket.number|urlencode }}" target="_blank" rel="noopener noreferrer" title="{{ ticket.subject }}"><span class="repo-tag">{{ ticket.queue }}</span><span class="item-number">{{ ticket.number }}</span><span class="item-title">{{ ticket.subject }}</span><span class="work-ticket-state">{{ ticket.state }} · {{ ticket.priority }}</span>{{ icon('arrow-up-right') }}</a>{% else %}<p class="quiet-empty">No matching tickets in configured queues.</p>{% endfor %}</div>{% else %}<p class="work-note">Add <code>otrs_user</code> to this person's entry in <code>team</code> in config.yml to show their tickets.</p>{% endif %}</section>{% endif %}
+  {% endif %}
+</div>
+{% endblock %}

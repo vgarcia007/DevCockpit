@@ -222,7 +222,8 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
                     project_number=repo.get("project_number"), project_state="not_synced"))
         session.commit()
     manager = SyncManager(sessions, cfg)
-    otrs_manager = OTRSSyncManager(sessions, otrs_config) if otrs_enabled else None
+    otrs_manager = OTRSSyncManager(sessions, otrs_config,
+                                   include_responsible=any(person.get("otrs_user") for person in cfg["team"])) if otrs_enabled else None
     app = Flask(__name__)
     app.config["COCKPIT_CONFIG"] = cfg
     app.config["SYNC_MANAGER"] = manager
@@ -408,6 +409,51 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
         repos, issues, pulls, _, meta = snapshot()
         return render_template("team.html", **common(repos, meta), team=team_data(issues, pulls))
 
+    @app.get("/work")
+    def work_page():
+        own_login = cfg.get("github", {}).get("username", "").strip()
+        people = {person["github"].casefold(): person for person in cfg["team"]}
+        if own_login and own_login.casefold() not in people:
+            people[own_login.casefold()] = {"github": own_login, "name": own_login}
+        selected = request.args.get("person", own_login).strip().casefold()
+        if selected and selected not in people:
+            abort(404)
+        person = people.get(selected)
+        repos, issues, pulls, _, meta = snapshot()
+        assigned = ordered_issues([issue for issue in issues if person and issue.state == "open"
+                                   and any(login.casefold() == selected for login in issue.assignees)])
+        authored = sorted([pull for pull in pulls if person and pull.state == "open"
+                           and ((pull.author or "").casefold() == selected
+                                or any(login.casefold() == selected for login in pull.assignees))],
+                          key=lambda pull: pull.updated_at, reverse=True)
+        reviews = sorted([pull for pull in pulls if person and pull.state == "open"
+                          and pull not in authored
+                          and any(login.casefold() == selected for login in pull.requested_reviewers)],
+                         key=lambda pull: pull.updated_at, reverse=True)
+        with sessions() as session:
+            external = session.scalars(select(ExternalTeamIssue).where(
+                func.lower(ExternalTeamIssue.login) == selected
+            ).order_by(ExternalTeamIssue.updated_at.desc())).all() if person else []
+            external_sync = session.get(ExternalTeamSync, selected) if person else None
+            owner = (person.get("otrs_user") or "").strip() if person else ""
+            tickets = session.scalars(select(OTRSTicket).where(or_(
+                func.lower(func.trim(OTRSTicket.owner)) == owner.casefold(),
+                func.lower(func.trim(OTRSTicket.responsible)) == owner.casefold(),
+                func.lower(func.trim(OTRSTicket.responsible_email)) == owner.casefold(),
+                func.lower(func.substr(OTRSTicket.responsible_email, 1,
+                                       func.instr(OTRSTicket.responsible_email, "@") - 1)) == owner.casefold(),
+            )
+            ).order_by(OTRSTicket.created_at.desc(), OTRSTicket.number.desc())).all() if otrs_manager and owner else []
+            otrs_state = session.get(OTRSSyncState, "tickets") if otrs_manager else None
+        configured_full_names = {repo["full_name"].casefold() for repo in cfg["repositories"]}
+        external = [issue for issue in external if issue.repository_name.casefold() not in configured_full_names]
+        return render_template("work.html", **common(repos, meta), person=person,
+                               people=sorted(people.values(), key=team_sort_key), own_login=own_login,
+                               issues=assigned, external=external, external_sync=external_sync,
+                               authored=authored, reviews=reviews, tickets=tickets,
+                               otrs_state=otrs_state,
+                               otrs_url=otrs_config["url"].rstrip("/") + "/index.pl" if otrs_manager else None)
+
     @app.get("/issues")
     def issues_page():
         repos, issues, _, _, meta = snapshot()
@@ -440,7 +486,7 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
         page = int(page)
         per_page = 50
         active_filters = {name: request.args.get(name, "").strip()
-                          for name in ("queue", "status", "priority", "owner", "q", "sort")}
+                          for name in ("queue", "status", "priority", "owner", "responsible", "q", "sort")}
         def contains_text(column, value):
             escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             return column.ilike(f"%{escaped}%", escape="\\")
@@ -452,10 +498,14 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
                 conditions.append(column == active_filters[name])
         if active_filters["owner"]:
             conditions.append(contains_text(OTRSTicket.owner, active_filters["owner"]))
+        if active_filters["responsible"]:
+            conditions.append(or_(contains_text(OTRSTicket.responsible, active_filters["responsible"]),
+                                  contains_text(OTRSTicket.responsible_email, active_filters["responsible"])))
         if active_filters["q"]:
             conditions.append(or_(*(contains_text(column, active_filters["q"]) for column in
                                     (OTRSTicket.number, OTRSTicket.subject, OTRSTicket.queue,
-                                     OTRSTicket.state, OTRSTicket.priority, OTRSTicket.owner))))
+                                     OTRSTicket.state, OTRSTicket.priority, OTRSTicket.owner,
+                                     OTRSTicket.responsible, OTRSTicket.responsible_email))))
         sort = active_filters["sort"] if active_filters["sort"] in ("newest", "oldest") else "newest"
         ordering = (OTRSTicket.created_at.asc(), OTRSTicket.number.asc()) if sort == "oldest" else (
             OTRSTicket.created_at.desc(), OTRSTicket.number.desc())

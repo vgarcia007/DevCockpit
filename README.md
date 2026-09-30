@@ -35,7 +35,7 @@ In your private `config.yml`, set:
 | `github.username` | Your GitHub login for the “My Issues” and “My Pull Requests” shortcuts. |
 | `repositories[].project_number` | The number at the end of a Projects v2 URL, or `null` if this repository has no Project. |
 
-If you use Projects, make the `workflow.values` match your Project's **exact** Status option names. Set `priority.source` to `project` for a Project field or `issue_field` for an organization Issue Field. Add people under `team` to show their work in Team and Brief. The supplied [`config.example.yml`](config.example.yml) contains these settings with one example repository.
+If you use Projects, make the `workflow.values` match your Project's **exact** Status option names. Set `priority.source` to `project` for a Project field or `issue_field` for an organization Issue Field. Add people under `team` to show their work in Team and Brief. **My work** uses `github.username` and can switch to any configured team member. The supplied [`config.example.yml`](config.example.yml) contains these settings with one example repository.
 
 If a Project is unavailable, GitHub may need the `read:project` scope: `gh auth refresh -s read:project`. DevCockpit shows sync errors in the UI.
 
@@ -44,6 +44,8 @@ If a Project is unavailable, GitHub may need the `read:project` scope: `gh auth 
 Remove the comment markers from the `otrs` example in `config.yml`, then enter your own HTTPS URL, agent login, password, and queue IDs. `url` and `queue_ids` are required when OTRS is enabled. Tickets use a separate 15-minute sync and table.
 
 Use `excluded_states` to hide closed statuses, `attention_queue_ids` for tickets shown under **Need attention** and in notifications, and `highlight_queue_ids` for emphasized table rows. These lists are empty unless configured. Set `otrs.enabled: false` to stop OTRS and delete its local cache on restart. Keep `config.yml` private.
+
+To include a person's tickets in **My work**, add `otrs_user` to their `team` entry. It must match the OTRS owner or responsible agent. Add yourself to `team` too if you want your own tickets there.
 
 ![Ticket table with example data](docs/screenshots/tickets.png)
 *Optional OTRS view with fictional demo data.*

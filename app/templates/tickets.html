@@ -22,20 +22,21 @@
   <select name="status" class="form-select form-select-sm" aria-label="Status"><option value="">Alle Status</option>{% for value in statuses %}<option value="{{ value }}" {% if request.args.get('status') == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select>
   <select name="priority" class="form-select form-select-sm" aria-label="Priorität"><option value="">Alle Prioritäten</option>{% for value in priorities %}<option value="{{ value }}" {% if request.args.get('priority') == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select>
   <input name="owner" class="form-control form-control-sm" placeholder="Besitzer" aria-label="Besitzer" value="{{ request.args.get('owner', '') }}">
+  <input name="responsible" class="form-control form-control-sm" placeholder="Verantwortlicher" aria-label="Verantwortlicher" value="{{ request.args.get('responsible', '') }}">
   <select name="sort" class="form-select form-select-sm" aria-label="Sortierung"><option value="newest">Neueste zuerst</option><option value="oldest" {% if request.args.get('sort') == 'oldest' %}selected{% endif %}>Älteste zuerst</option></select>
   <input name="q" class="form-control form-control-sm" placeholder="Suche" aria-label="Tickets durchsuchen" value="{{ request.args.get('q', '') }}">
 </form>
 
 <div class="table-responsive panel p-0"><table class="table table-sm table-hover align-middle mb-0">
-  <thead><tr><th>Nummer</th><th>Betreff</th><th>Queue</th><th>Status</th><th>Priorität</th><th>Besitzer</th><th>Erstellt</th></tr></thead>
+  <thead><tr><th>Nummer</th><th>Betreff</th><th>Queue</th><th>Status</th><th>Priorität</th><th>Besitzer</th><th>Verantwortlicher</th><th>Erstellt</th></tr></thead>
   <tbody>{% for ticket in tickets %}
     <tr{% if ticket.queue_id in highlight_queue_ids %} class="ticket-highlight"{% endif %}>
       <td><a href="{{ otrs_url }}?Action=AgentTicketZoom;TicketNumber={{ ticket.number|urlencode }}" target="_blank" rel="noopener noreferrer">{{ ticket.number }}</a></td>
       <td class="table-title"><a href="{{ otrs_url }}?Action=AgentTicketZoom;TicketNumber={{ ticket.number|urlencode }}" target="_blank" rel="noopener noreferrer" title="{{ ticket.subject }}">{{ ticket.subject }}</a></td>
       <td><span{% if ticket.queue_id in highlight_queue_ids %} class="ticket-highlight-label"{% endif %}>{{ ticket.queue }}</span></td>
-      <td>{{ ticket.state }}</td><td>{{ ticket.priority }}</td><td>{{ ticket.owner or '—' }}</td><td>{{ ticket.created_at|date }}</td>
+      <td>{{ ticket.state }}</td><td>{{ ticket.priority }}</td><td>{{ ticket.owner or '—' }}</td><td>{{ ticket.responsible or '—' }}</td><td>{{ ticket.created_at|date }}</td>
     </tr>
-  {% else %}<tr><td colspan="7" class="text-secondary">Keine passenden Tickets</td></tr>{% endfor %}</tbody>
+  {% else %}<tr><td colspan="8" class="text-secondary">Keine passenden Tickets</td></tr>{% endfor %}</tbody>
 </table></div>
 {% if pages > 1 %}<nav class="ticket-pagination" aria-label="Ticketseiten"><span>Seite {{ page }} von {{ pages }}</span>{% if page > 1 %}<a href="{{ url_for('tickets_page', page=page-1, **active_filters) }}">Zurück</a>{% endif %}{% if page < pages %}<a href="{{ url_for('tickets_page', page=page+1, **active_filters) }}">Weiter</a>{% endif %}</nav>{% endif %}
 {% endblock %}

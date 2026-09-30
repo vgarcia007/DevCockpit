@@ -75,7 +75,16 @@ def load_config(path=None):
                 raise ValueError("otrs.excluded_states must be a list of statuses")
         data["otrs"] = otrs
     unique = {}
+    otrs_owners = set()
     for person in data.get("team", []):
+        owner = person.get("otrs_user")
+        if owner is not None:
+            if not isinstance(owner, str) or not owner.strip():
+                raise ValueError("team.otrs_user must be a non-empty string")
+            owner = owner.strip().casefold()
+            if owner in otrs_owners:
+                raise ValueError("team.otrs_user must be unique")
+            otrs_owners.add(owner)
         unique[person["github"].lower()] = person
     data["team"] = list(unique.values())
     return data

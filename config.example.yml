@@ -28,6 +28,7 @@ priority:
 team:
   - github: your-github-login
     name: Your Name
+    # otrs_user: your-otrs-login # Matches OTRS owner or responsible agent.
 
 sync:
   interval_seconds: 300

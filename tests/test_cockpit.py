@@ -250,7 +250,7 @@ team:
 """, encoding="utf-8")
     app = create_app(config_path=config, database_path=tmp_path / "team.sqlite", auto_sync=False)
     page = app.test_client().get("/team").get_data(as_text=True)
-    names = [page.index(f"<h2>{name}</h2>") for name in ("Alice", "Änne", "Bob", "Zoe")]
+    names = [page.index(f">{name}</a></h2>") for name in ("Alice", "Änne", "Bob", "Zoe")]
     assert names == sorted(names)
     assert "Other repository assignments have not been checked yet." in page
     assert "No tracked active or assigned work" not in page

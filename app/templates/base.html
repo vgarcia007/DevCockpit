@@ -21,7 +21,7 @@
     {% set active_endpoint = {'issue_detail': 'issues_page', 'pull_detail': 'pulls_page', 'repository_detail': 'repositories_page'}.get(request.endpoint, request.endpoint) %}
     <nav class="sidebar-nav" aria-label="Primary">
       <div class="nav-caption">Command</div>
-      {% for endpoint,label,icon_name in [('home','Briefing','clipboard-list'),('now_page','Now','play'),('team','Team','users'),('repositories_page','Repositories','folder-git-2')] %}
+      {% for endpoint,label,icon_name in [('home','Briefing','clipboard-list'),('work_page','My work','list-checks'),('now_page','Now','play'),('team','Team','users'),('repositories_page','Repositories','folder-git-2')] %}
       <a class="sidebar-link{% if active_endpoint == endpoint %} is-active{% endif %}" href="{{ url_for(endpoint) }}"{% if active_endpoint == endpoint %} aria-current="page"{% endif %}>{{ icon(icon_name) }}<span>{{ label }}</span></a>
       {% endfor %}
       <div class="nav-caption nav-caption-secondary">Explore</div>
