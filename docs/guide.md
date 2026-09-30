@@ -43,14 +43,15 @@ Add the commented `otrs` block from the example configuration and replace every 
 
 When `otrs_user` mappings are configured, My work also reads the responsible agent for active tickets. If the OTRS CSV export has a **Verantwortlicher** or **Responsible** column, it uses that. Otherwise, it reads each active ticket's detail page. An OTRS administrator can add `Responsible` to `Ticket::Frontend::AgentTicketSearch###SearchCSVData` to avoid those extra detail requests.
 
-The Tickets section is visible only when OTRS is enabled. It has its own table, search, filters, and ticket links. Ticket data is not included in the GitHub Issues, Board, or Team views.
+The Tickets section is visible only when OTRS is enabled. It has its own table, search, filters, and ticket links. Ticket data is not included in the GitHub Issues or Board views.
+Mapped OTRS tickets also appear as separate groups on Overview, Now, Team, My work, and Brief. Brief's copied text includes those tickets. Global Search adds a separate ticket result section. When OTRS is disabled, these ticket sections disappear and the GitHub views continue to work.
 
 ## Views and notifications
 
 - **Briefing** (`/`) shows observed changes, Need attention, team work, Ready issues, recent releases, and repository state.
 - **Brief** (`/brief`) provides a compact text summary. **Copy as prompt** copies [`brief_prompt.txt`](../brief_prompt.txt) followed by the summary to the clipboard; it does not send data to an AI service.
 - **Now**, **Team**, **Issues**, **Pull Requests**, **Repositories**, **Releases**, and **Board** show their respective GitHub data. Board has repository and assignee filters. Releases has a timeline with clickable notes.
-- **Search** searches cached issues and pull requests. **Tickets** is the optional OTRS view.
+- **Search** searches cached issues and pull requests, plus tickets when OTRS is enabled. **Tickets** is the optional dedicated OTRS view.
 
 **Since your last visit** shows changes observed between successful GitHub syncs. You can mark individual items done and restore them in Completed. Those choices and your last visit are stored in this browser. Observed changes are kept in the local database for 30 days. Events that appear and disappear between syncs may not be seen.
 

@@ -45,7 +45,7 @@ Remove the comment markers from the `otrs` example in `config.yml`, then enter y
 
 Use `excluded_states` to hide closed statuses, `attention_queue_ids` for tickets shown under **Need attention** and in notifications, and `highlight_queue_ids` for emphasized table rows. These lists are empty unless configured. Set `otrs.enabled: false` to stop OTRS and delete its local cache on restart. Keep `config.yml` private.
 
-To include a person's tickets in **My work**, add `otrs_user` to their `team` entry. It must match the OTRS owner or responsible agent. Add yourself to `team` too if you want your own tickets there.
+To include a person's tickets in **My work**, Overview, Now, Team, and Brief, add `otrs_user` to their `team` entry. It must match the OTRS owner or responsible agent. Add yourself to `team` too if you want your own tickets there. Search shows ticket results separately when OTRS is enabled. With `otrs.enabled: false`, the GitHub views continue without ticket data.
 
 ![Ticket table with example data](docs/screenshots/tickets.png)
 *Optional OTRS view with fictional demo data.*

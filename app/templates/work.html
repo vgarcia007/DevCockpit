@@ -6,7 +6,7 @@
 {% block content %}
 <div class="mode-page work-page">
   <header class="mode-intro work-intro">
-    <div><div class="eyebrow">Personal view</div><h1>{% if person and person.github|lower == own_login|lower %}My work{% else %}Team member's work{% endif %}</h1><p>Open GitHub work and OTRS tickets assigned to one person.</p></div>
+    <div><div class="eyebrow">Personal view</div><h1>{% if person and person.github|lower == own_login|lower %}My work{% else %}Team member's work{% endif %}</h1><p>Open GitHub work{% if otrs_enabled %} and OTRS tickets{% endif %} assigned to one person.</p></div>
     {% if people %}<form method="get" data-auto-filter><label for="work-person">Person</label><select id="work-person" name="person" class="form-select form-select-sm"><option value="" {% if not person %}selected{% endif %}>Choose a person</option>{% for option in people %}<option value="{{ option.github }}" {% if person and option.github|lower == person.github|lower %}selected{% endif %}>{{ option.name }} (@{{ option.github }}){% if option.github|lower == own_login|lower %} · me{% endif %}</option>{% endfor %}</select></form>{% endif %}
   </header>
   {% if not person %}<div class="app-notice">Set <code>github.username</code> in config.yml, or choose a configured team member above.</div>{% else %}

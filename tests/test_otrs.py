@@ -141,6 +141,17 @@ def test_work_page_matches_assignee_and_both_otrs_roles(tmp_path):
     assert b"Bob issue" in bob.data and b"Bob only" in bob.data
     assert b"Alice issue" not in bob.data
     assert client.get("/work?person=unknown").status_code == 404
+    home = client.get("/").data
+    assert b"Alice owns" in home and b"Alice responsible" in home
+    assert b"Bob only" in home
+    team = client.get("/team").data
+    assert b"OTRS tickets" in team and b"Alice responsible" in team
+    now_page = client.get("/now").data
+    assert b"Open OTRS tickets" in now_page and b"Alice owns" in now_page
+    brief = client.get("/brief").data
+    assert b"OTRS 2" in brief and b"OTRS tickets 2" in brief
+    search = client.get("/search?q=Alice+responsible").data
+    assert b"Alice responsible" in search and b"Bob only" not in search
 
 
 def test_client_uses_agent_session_and_csv_without_saving_profile():
@@ -270,6 +281,10 @@ def test_home_attention_lists_only_selected_otrs_queues(tmp_path):
     assert b"Portal needs help" in response.data and b"Development needs help" in response.data
     assert b"Ordinary ticket" not in response.data and b"Already closed" not in response.data
     assert b'AgentTicketZoom;TicketNumber=111" target="_blank"' in response.data
+    brief = app.test_client().get("/brief")
+    assert brief.status_code == 200
+    assert b"OTRS need attention" in brief.data and b"Portal needs help" in brief.data
+    assert b"OTRS NEED ATTENTION" in brief.data
 
 
 def test_sync_observes_entry_change_and_completion_once(tmp_path, monkeypatch):
@@ -315,14 +330,32 @@ def test_disabled_otrs_purges_cache_and_needs_no_credentials(tmp_path):
                                        title="Private", url="https://tickets.example.com/index.pl?Action=AgentTicketZoom;TicketNumber=123",
                                        detail="Entered", observed_at=datetime.now(timezone.utc)))
         session.commit()
-    app = create_app(config_file(tmp_path, {"enabled": False}), database, auto_sync=False)
+    path = config_file(tmp_path, {"enabled": False})
+    settings = yaml.safe_load(path.read_text(encoding="utf-8"))
+    settings["github"] = {"username": "alice"}
+    settings["team"] = [{"github": "alice", "name": "Alice", "otrs_user": "agent"}]
+    path.write_text(yaml.safe_dump(settings), encoding="utf-8")
+    app = create_app(path, database, auto_sync=False)
     assert app.config["OTRS_SYNC_MANAGER"] is None
     with make_session(database)() as session:
         assert session.scalars(select(OTRSTicket)).all() == []
         assert session.scalars(select(OTRSSyncState)).all() == []
         assert session.scalars(select(OTRSObservedChange)).all() == []
+        now = datetime.now(timezone.utc)
+        session.add(Issue(github_id=1, repository_name="One", number=1, title="GitHub work continues",
+            url="https://github.com/acme/one/issues/1", state="open", assignees=["alice"],
+            labels=[], created_at=now, updated_at=now, workflow="In Progress",
+            workflow_state="known", priority_state="unavailable"))
+        session.commit()
     assert app.test_client().get("/tickets").status_code == 404
     assert b"OTRS tickets" not in app.test_client().get("/").data
+    for path in ("/team", "/brief", "/work", "/now", "/search?q=Private"):
+        response = app.test_client().get(path)
+        assert response.status_code == 200
+        assert b"OTRS tickets" not in response.data
+        assert b"Private" not in response.data
+        if path != "/search?q=Private":
+            assert b"GitHub work continues" in response.data
     assert app.test_client().get("/notifications").get_json()["otrs_origin"] is None
 
 

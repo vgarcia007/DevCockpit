@@ -36,7 +36,7 @@ def fmt_time(value):
     return value.replace(tzinfo=timezone.utc).astimezone(LOCAL_TZ).strftime("%d.%m.%Y %H:%M") if value else "—"
 
 
-def brief_as_text(attention, team, reviews, ready, shipped, cards, last_sync):
+def brief_as_text(attention, team, reviews, ready, shipped, cards, last_sync, attention_tickets=None):
     def cell(value):
         return " ".join(str(value or "").split())
 
@@ -54,6 +54,12 @@ def brief_as_text(attention, team, reviews, ready, shipped, cards, last_sync):
     if not attention:
         lines.append("- None")
 
+    if attention_tickets:
+        lines.extend(["", section("OTRS NEED ATTENTION", len(attention_tickets), min(len(attention_tickets), 4))])
+        for ticket in attention_tickets[:4]:
+            lines.append(f"- {cell(ticket.queue)} {cell(ticket.number)} | {cell(ticket.subject)} | "
+                         f"{cell(ticket.state)} · {cell(ticket.priority)}")
+
     lines.extend(["", "TEAM NOW"])
     for member in team:
         person = member["person"]
@@ -61,9 +67,13 @@ def brief_as_text(attention, team, reviews, ready, shipped, cards, last_sync):
             f"- {cell(person['name'])} (@{cell(person['github'])}) | "
             f"Now {len(member['active'])} | Review {len(member['review'])} | "
             f"Ready next {len(member['ready_next'])} | Assigned backlog {len(member['assigned_backlog'])}"
+            + (f" | OTRS tickets {len(member['tickets'])}" if member.get("tickets") else "")
         )
         if member["active"]:
             lines.append(f"  Now: {item_label(member['active'][0])}")
+        if member.get("tickets"):
+            ticket = member["tickets"][0]
+            lines.append(f"  OTRS: {cell(ticket.queue)} {cell(ticket.number)} | {cell(ticket.subject)}")
     if not team:
         lines.append("- None")
 
@@ -113,6 +123,16 @@ def team_sort_key(person):
     name = unicodedata.normalize("NFKD", (person.get("name") or person["github"]).casefold())
     return ("".join(char for char in name if not unicodedata.combining(char)),
             person["github"].casefold())
+
+
+def otrs_user_matches(ticket, user):
+    user = (user or "").strip().casefold()
+    if not user:
+        return False
+    email = (ticket.responsible_email or "").strip().casefold()
+    return user in {(ticket.owner or "").strip().casefold(),
+                    (ticket.responsible or "").strip().casefold(),
+                    email, email.partition("@")[0] if "@" in email else ""}
 
 
 def release_window_start(now, period):
@@ -275,6 +295,8 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
         with sessions() as session:
             outside = session.scalars(select(ExternalTeamIssue).order_by(ExternalTeamIssue.updated_at.desc())).all()
             outside_state = {state.login: state for state in session.scalars(select(ExternalTeamSync)).all()}
+            tickets = session.scalars(select(OTRSTicket).order_by(
+                OTRSTicket.created_at.desc(), OTRSTicket.number.desc())).all() if otrs_manager else []
         configured_full_names = {repo["full_name"].lower() for repo in cfg["repositories"]}
         for person in sorted(cfg["team"], key=team_sort_key):
             user = person["github"].lower()
@@ -286,9 +308,20 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
                            "assigned_backlog": ordered_issues([i for i in assigned if status(i, "backlog")]),
                            "next": [i for i in assigned if status(i, "ready") or status(i, "backlog")],
                            "prs": [p for p in pulls if p.state == "open" and (p.author or "").lower() == user],
+                           "tickets": [ticket for ticket in tickets if otrs_user_matches(ticket, person.get("otrs_user"))],
                            "external": [i for i in outside if i.login == user and i.repository_name.lower() not in configured_full_names],
                            "external_sync": outside_state.get(user)})
         return result
+
+    def otrs_attention_tickets():
+        if not otrs_manager:
+            return []
+        excluded_states = [state.strip().casefold() for state in otrs_config["excluded_states"]]
+        with sessions() as session:
+            return session.scalars(select(OTRSTicket).where(
+                OTRSTicket.queue_id.in_(otrs_config["attention_queue_ids"]),
+                ~func.lower(func.trim(OTRSTicket.state)).in_(excluded_states),
+            ).order_by(OTRSTicket.created_at.desc(), OTRSTicket.number.desc())).all()
 
     def attention(issues, pulls):
         result = []
@@ -357,11 +390,7 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
             ).order_by(ObservedChange.observed_at.desc(), ObservedChange.id.desc())).all()
             changes = [{"event": event, "observed_ms": int(event.observed_at.replace(tzinfo=timezone.utc).timestamp() * 1000)}
                        for event in observed]
-            attention_tickets = session.scalars(select(OTRSTicket).where(
-                OTRSTicket.queue_id.in_(otrs_config["attention_queue_ids"]),
-                ~func.lower(func.trim(OTRSTicket.state)).in_([
-                    state.strip().casefold() for state in otrs_config["excluded_states"]]),
-            ).order_by(OTRSTicket.created_at.desc(), OTRSTicket.number.desc())).all() if otrs_manager else []
+        attention_tickets = otrs_attention_tickets()
         github_attention = lead_attention(open_issues, open_pulls)
         return render_template("home.html", **common(repos, meta), attention=github_attention,
             attention_tickets=attention_tickets,
@@ -386,11 +415,13 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
         open_issues = [i for i in issues if i.state == "open"]
         open_pulls = [p for p in pulls if p.state == "open"]
         ready = ordered_issues([i for i in open_issues if status(i, "ready") and not i.assignees])
-        view = dict(attention=lead_attention(open_issues, open_pulls), team=team_data(open_issues, open_pulls),
+        view = dict(attention=lead_attention(open_issues, open_pulls),
+                    attention_tickets=otrs_attention_tickets(), team=team_data(open_issues, open_pulls),
                     reviews=[p for p in open_pulls if p.review_state in ("Waiting for Review", "Changes Requested", "Approval before latest commit")],
                     ready=ready, shipped=recent_releases(releases), cards=repo_cards(repos, issues, pulls, releases))
         shared = common(repos, meta)
         return render_template("brief.html", **shared, **view,
+                               otrs_url=otrs_config["url"].rstrip("/") + "/index.pl" if otrs_manager else None,
                                brief_export_text=brief_with_prompt(
                                    brief_as_text(**view, last_sync=shared["last_sync"])))
 
@@ -402,12 +433,15 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
             (issue for issue in active if issue.repository_name == repo.name),
             key=lambda issue: issue.updated_at, reverse=True)} for repo in repos]
         return render_template("now.html", **common(repos, meta),
-            sections=[section for section in sections if section["issues"]], active_count=len(active))
+            sections=[section for section in sections if section["issues"]], active_count=len(active),
+            otrs_people=[entry for entry in team_data(issues, []) if entry["tickets"]] if otrs_manager else [],
+            otrs_url=otrs_config["url"].rstrip("/") + "/index.pl" if otrs_manager else None)
 
     @app.get("/team")
     def team():
         repos, issues, pulls, _, meta = snapshot()
-        return render_template("team.html", **common(repos, meta), team=team_data(issues, pulls))
+        return render_template("team.html", **common(repos, meta), team=team_data(issues, pulls),
+                               otrs_url=otrs_config["url"].rstrip("/") + "/index.pl" if otrs_manager else None)
 
     @app.get("/work")
     def work_page():
@@ -436,14 +470,9 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
             ).order_by(ExternalTeamIssue.updated_at.desc())).all() if person else []
             external_sync = session.get(ExternalTeamSync, selected) if person else None
             owner = (person.get("otrs_user") or "").strip() if person else ""
-            tickets = session.scalars(select(OTRSTicket).where(or_(
-                func.lower(func.trim(OTRSTicket.owner)) == owner.casefold(),
-                func.lower(func.trim(OTRSTicket.responsible)) == owner.casefold(),
-                func.lower(func.trim(OTRSTicket.responsible_email)) == owner.casefold(),
-                func.lower(func.substr(OTRSTicket.responsible_email, 1,
-                                       func.instr(OTRSTicket.responsible_email, "@") - 1)) == owner.casefold(),
-            )
-            ).order_by(OTRSTicket.created_at.desc(), OTRSTicket.number.desc())).all() if otrs_manager and owner else []
+            tickets = [ticket for ticket in session.scalars(select(OTRSTicket).order_by(
+                OTRSTicket.created_at.desc(), OTRSTicket.number.desc())).all()
+                if otrs_user_matches(ticket, owner)] if otrs_manager and owner else []
             otrs_state = session.get(OTRSSyncState, "tickets") if otrs_manager else None
         configured_full_names = {repo["full_name"].casefold() for repo in cfg["repositories"]}
         external = [issue for issue in external if issue.repository_name.casefold() not in configured_full_names]
@@ -624,7 +653,15 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
         q = request.args.get("q", "").lower().strip()
         matching_issues = [i for i in issues if q and q in " ".join([i.repository_name, str(i.number), i.title, i.author or "", *i.assignees, *i.labels]).lower()]
         matching_pulls = [p for p in pulls if q and q in " ".join([p.repository_name, str(p.number), p.title, p.author or "", *p.assignees, *p.requested_reviewers]).lower()]
-        return render_template("search.html", **common(repos, meta), q=q, issues=matching_issues[:100], pulls=matching_pulls[:100])
+        with sessions() as session:
+            tickets = session.scalars(select(OTRSTicket).order_by(
+                OTRSTicket.created_at.desc(), OTRSTicket.number.desc())).all() if otrs_manager and q else []
+        matching_tickets = [ticket for ticket in tickets if q in " ".join((
+            ticket.number, ticket.subject, ticket.queue, ticket.state, ticket.priority,
+            ticket.owner, ticket.responsible or "", ticket.responsible_email or "")).lower()]
+        return render_template("search.html", **common(repos, meta), q=q, issues=matching_issues[:100],
+                               pulls=matching_pulls[:100], tickets=matching_tickets[:100],
+                               otrs_url=otrs_config["url"].rstrip("/") + "/index.pl" if otrs_manager else None)
 
     @app.post("/sync")
     def sync_now():

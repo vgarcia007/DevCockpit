@@ -467,6 +467,9 @@ a,button,summary,input,select { transition:background-color .13s ease,border-col
 .person-detail-head>div:nth-child(2) { min-width:0; }
 .person-detail-head h2 { margin:0; font-size:17px; font-weight:700; letter-spacing:-.025em; }
 .person-detail-head h2 a { color:inherit; text-decoration:none; }.person-detail-head h2 a:hover { color:var(--color-accent); text-decoration:underline; }
+.person-identity strong a { color:inherit; text-decoration:none; }.person-identity strong a:hover { color:var(--color-accent); text-decoration:underline; }
+.person-state.otrs,.team-work-label.state-otrs { color:var(--color-warning); }
+.now-otrs-person { margin:14px 0 20px; }.now-otrs-person h3 { margin:0 0 8px; font-size:14px; font-weight:700; }.now-otrs-person h3 a { color:inherit; text-decoration:none; }.now-otrs-person h3 a:hover { color:var(--color-accent); text-decoration:underline; }.now-otrs-person h3 span { color:var(--color-muted); font-size:12px; }
 .work-intro { display:flex; align-items:end; justify-content:space-between; gap:20px; }
 .work-intro form { min-width:245px; }.work-intro label { display:block; margin-bottom:5px; color:var(--color-muted); font-size:11px; font-weight:700; }
 .work-person { display:flex; align-items:center; gap:12px; margin:0 0 18px; }.work-person strong { display:block; font-size:18px; }.work-person span { color:var(--color-muted); font-size:12px; }
