@@ -213,6 +213,7 @@ class ZabbixProblem(Base):
     name: Mapped[str] = mapped_column(Text)
     severity: Mapped[int] = mapped_column(Integer)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     hostids: Mapped[list] = mapped_column(JSON)
     acknowledged: Mapped[bool] = mapped_column(Boolean)
     suppressed: Mapped[bool] = mapped_column(Boolean)
@@ -230,6 +231,8 @@ def make_session(database_path):
     engine = create_engine(f"sqlite:///{database_path}", connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     with engine.begin() as connection:
+        if "resolved_at" not in {column["name"] for column in inspect(connection).get_columns("zabbix_problems")}:
+            connection.execute(text("ALTER TABLE zabbix_problems ADD COLUMN resolved_at DATETIME"))
         if "body" not in {column["name"] for column in inspect(connection).get_columns("releases")}:
             connection.execute(text("ALTER TABLE releases ADD COLUMN body TEXT"))
         if "queue_id" not in {column["name"] for column in inspect(connection).get_columns("otrs_tickets")}:

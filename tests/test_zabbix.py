@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -8,7 +8,7 @@ from sqlalchemy import select
 from app.config import load_config
 from app.models import ZabbixHost, ZabbixProblem, ZabbixSyncState, make_session
 from app.web import create_app
-from app.zabbix import SEVERITIES, ZabbixClient, ZabbixError
+from app.zabbix import SEVERITIES, ZabbixClient, ZabbixError, problem_duration
 
 
 def config_file(tmp_path, **changes):
@@ -36,6 +36,7 @@ def snapshot():
 
 @pytest.mark.parametrize("changes", [
     {"attention_min_severity": 6}, {"attention_min_severity": True}, {"interval_seconds": 5},
+    {"history_days": 0}, {"history_days": 366}, {"history_days": True},
     {"url": "http://monitoring.example.com/"}, {"password": ""}, {"hosts": []},
     {"hosts": [{"host": "a", "environment": "unknown"}]},
     {"hosts": [{"host": "a", "environment": "prod"}, {"host": "a", "environment": "preprod"}]},
@@ -144,11 +145,20 @@ class FakeSession:
                 result.pop()
         elif method == "trigger.get":
             result = [{"triggerid": "10", "hosts": [{"hostid": "1"}, {"hostid": "2"}]}]
-        elif method == "problem.get":
-            assert json["params"]["recent"] is False
-            assert "acknowledged" not in json["params"] and "suppressed" not in json["params"]
-            result = [{"eventid": "20", "objectid": "10", "name": "Shared problem", "severity": "0",
-                       "clock": "1790841600", "acknowledged": "1", "suppressed": "1"}] * 2
+        elif method == "event.get":
+            params = json["params"]
+            if "eventids" in params:
+                assert params["eventids"] == ["22"]
+                result = [{"eventid": "22", "clock": "1790841630"}]
+            else:
+                assert params["value"] == 1
+                assert params["problem_time_till"] - params["problem_time_from"] == 30 * 86400
+                assert "time_from" not in params  # Older open problems also overlap the window.
+                assert "acknowledged" not in params and "suppressed" not in params
+                result = [{"eventid": "20", "objectid": "10", "name": "Shared problem", "severity": "0",
+                           "clock": "1790841600", "acknowledged": "1", "suppressed": "1", "r_eventid": "0",
+                           "hosts": [{"hostid": "1"}, {"hostid": "2"}]}] * 2
+                result.append(dict(result[0], eventid="21", name="Brief incident", r_eventid="22"))
         else:
             assert method == "user.logout"
             result = True
@@ -162,11 +172,91 @@ def test_api_client_maps_shared_problems_and_logs_out(tmp_path):
     settings = load_config(config_file(tmp_path))["zabbix"]
     session = FakeSession()
     hosts, problems = ZabbixClient(settings, session).fetch_all()
-    assert len(hosts) == 2 and len(problems) == 1
+    assert len(hosts) == 2 and len(problems) == 2
     assert problems[0]["hostids"] == ["1", "2"]
     assert problems[0]["acknowledged"] and problems[0]["suppressed"]
+    assert problems[0]["resolved_at"] is None
+    assert problem_duration(problems[1]["started_at"], problems[1]["resolved_at"]) == "30s"
     assert session.methods[-1] == "user.logout" and session.closed
     missing = FakeSession(missing_host=True)
     with pytest.raises(ZabbixError, match="missing or inaccessible"):
         ZabbixClient(settings, missing).fetch_all()
     assert missing.methods[-1] == "user.logout" and missing.closed
+
+
+def test_brief_incident_is_visible_in_history_but_not_attention(tmp_path, monkeypatch):
+    path = config_file(tmp_path)
+    app = create_app(path, tmp_path / 'history.sqlite', auto_sync=False)
+    manager = app.config['ZABBIX_SYNC_MANAGER']
+    hosts, problems = snapshot()
+    short = dict(problems[4], eventid='brief', name='Brief outage',
+                 started_at=datetime.now(timezone.utc) - timedelta(seconds=45),
+                 resolved_at=datetime.now(timezone.utc) - timedelta(seconds=15))
+    monkeypatch.setattr(ZabbixClient, 'fetch_all', lambda self: (hosts, [problems[4], short]))
+    assert manager.run_sync()
+    client = app.test_client()
+    history = client.get('/monitoring').get_data(as_text=True)
+    assert 'Brief outage' in history and '30s' in history
+    assert 'Last 30 days' in history
+    assert 'Brief outage' not in client.get('/').get_data(as_text=True)
+    assert 'Problem High' in client.get('/').get_data(as_text=True)
+    assert b'Brief outage' not in client.get('/monitoring?status=open').data
+    resolved = client.get('/monitoring?status=resolved').get_data(as_text=True)
+    assert 'Brief outage' in resolved and 'Problem High' not in resolved
+    assert '<option value="resolved" selected>' in resolved
+    assert client.get('/monitoring?status=unknown').status_code == 400
+    # A later sync keeps resolved history while removing problems from attention.
+    closed = dict(problems[4], resolved_at=datetime.now(timezone.utc))
+    monkeypatch.setattr(ZabbixClient, 'fetch_all', lambda self: (hosts, [closed, short]))
+    assert manager.run_sync()
+    assert b'Problem High' not in client.get('/').data
+    assert b'Problem High' in client.get('/monitoring').data
+    assert b'No open problems' in client.get('/monitoring').data
+
+
+def test_history_pagination_and_missing_recovery(tmp_path):
+    settings = load_config(config_file(tmp_path, history_days=7))['zabbix']
+
+    class PagedSession(FakeSession):
+        def post(self, url, json, **kwargs):
+            if json['method'] != 'event.get':
+                return super().post(url, json, **kwargs)
+            params = json['params']
+            assert params['problem_time_till'] - params['problem_time_from'] == 7 * 86400
+            first = int(params.get('eventid_from', '1'))
+            count = 500 if first == 1 else 1
+            assert first in (1, 501)
+            rows = [dict(eventid=str(index), objectid='10', name='Repeated incident', severity='2',
+                         clock='1790841600', acknowledged='0', suppressed='0', r_eventid='0',
+                         hosts=[{'hostid': '1'}]) for index in range(first, first + count)]
+            return SimpleNamespace(status_code=200, json=lambda: {'id': json['id'], 'result': rows})
+
+    assert len(ZabbixClient(settings, PagedSession()).fetch_all()[1]) == 501
+
+    class MissingRecoverySession(FakeSession):
+        def post(self, url, json, **kwargs):
+            if json['method'] == 'event.get' and 'eventids' in json['params']:
+                return SimpleNamespace(status_code=200, json=lambda: {'id': json['id'], 'result': []})
+            return super().post(url, json, **kwargs)
+
+    session = MissingRecoverySession()
+    with pytest.raises(ZabbixError, match='recovery events'):
+        ZabbixClient(load_config(config_file(tmp_path))['zabbix'], session).fetch_all()
+    assert session.methods[-1] == 'user.logout' and session.closed
+
+
+def test_existing_zabbix_database_is_migrated(tmp_path):
+    import sqlite3
+
+    database = tmp_path / 'legacy.sqlite'
+    with sqlite3.connect(database) as connection:
+        connection.execute('''CREATE TABLE zabbix_problems (
+            eventid VARCHAR PRIMARY KEY, triggerid VARCHAR, name TEXT, severity INTEGER,
+            started_at DATETIME, hostids JSON, acknowledged BOOLEAN, suppressed BOOLEAN)''')
+        connection.execute('''INSERT INTO zabbix_problems VALUES
+            ('1', '10', 'Existing problem', 2, '2026-10-01 10:00:00', '["1"]', 0, 0)''')
+    sessions = make_session(database)
+    with sessions() as session:
+        problem = session.get(ZabbixProblem, '1')
+        assert problem.name == 'Existing problem' and problem.resolved_at is None
+    make_session(database)  # Migration is safe to run again.

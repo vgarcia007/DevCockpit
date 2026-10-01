@@ -62,6 +62,7 @@ zabbix:
   password: your-password
   interval_seconds: 60
   attention_min_severity: 0
+  history_days: 30
   hosts:
     - host: app.example.com
       environment: prod
@@ -69,9 +70,9 @@ zabbix:
       environment: preprod
 ```
 
-Use the frontend URL including its installation path, and the exact technical host names from Zabbix. Your account needs API access to `host.get`, `trigger.get`, and `problem.get`. Password login requires an account without Zabbix MFA. Sessions are logged out after each sync.
+Use the frontend URL including its installation path, and the exact technical host names from Zabbix. Your account needs API access to `host.get`, `trigger.get`, and `event.get`. Password login requires an account without Zabbix MFA. Sessions are logged out after each sync.
 
-**Monitoring → Applications** shows hosts and all open problems, including acknowledged and suppressed problems. Filter by application, environment or severity, or search the problem list. **Need attention** includes problems from both environments at or above `attention_min_severity`: `0` Not classified, `1` Information, `2` Warning, `3` Average, `4` High, `5` Disaster. The default `0` includes everything.
+**Monitoring → Applications** shows hosts and problem history, including acknowledged and suppressed problems. By default, it shows open and resolved problems from the last 30 days, plus older problems that are still open. Short incidents between syncs are retrieved from Zabbix too. Filter by status, application, environment or severity, or search the problem list. Resolved problems show their end time and total duration. Set `history_days` (1–365, default 30) to change the history window; available history depends on Zabbix retention and your account permissions. **Need attention** includes only open problems from both environments at or above `attention_min_severity`: `0` Not classified, `1` Information, `2` Warning, `3` Average, `4` High, `5` Disaster. The default `0` includes everything.
 
 Zabbix syncs independently every 60 seconds. Failed syncs keep the last successful data and display an error. Set `zabbix.enabled: false` or remove the section to disable it. Restart with `./start.sh` after config changes. Keep credentials in the private config; they are never sent to the browser.
 

@@ -2,7 +2,7 @@
 
 import logging
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode, urljoin
 
 import requests
@@ -14,8 +14,12 @@ LOG = logging.getLogger(__name__)
 SEVERITIES = ("Not classified", "Information", "Warning", "Average", "High", "Disaster")
 
 
-def problem_duration(value):
-    minutes = max(0, int((datetime.now(timezone.utc) - value.replace(tzinfo=timezone.utc)).total_seconds() // 60))
+def problem_duration(value, resolved_at=None):
+    end = resolved_at.replace(tzinfo=timezone.utc) if resolved_at else datetime.now(timezone.utc)
+    seconds = max(0, int((end - value.replace(tzinfo=timezone.utc)).total_seconds()))
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes = seconds // 60
     days, rest = divmod(minutes, 1440)
     hours, minutes = divmod(rest, 60)
     return (f"{days}d " if days else "") + (f"{hours}h " if hours else "") + f"{minutes}m"
@@ -82,13 +86,36 @@ class ZabbixClient:
             hosts = [dict(hostid=host["hostid"], host=host["host"], name=host["name"],
                 environment=configured[host["host"]]["environment"], enabled=host["status"] == "0",
                 trigger_count=sum(host["hostid"] in ids for ids in trigger_hosts.values())) for host in raw_hosts]
-            raw_problems = self.call("problem.get", {"hostids": sorted(hostids), "recent": False,
-                "source": 0, "object": 0,
-                "output": ["eventid", "objectid", "name", "severity", "clock", "acknowledged", "suppressed"],
-                "selectSuppressionData": "extend"})
+            now = datetime.now(timezone.utc)
+            # Include events that overlapped the window, including older problems still open.
+            params = {"hostids": sorted(hostids), "source": 0, "object": 0, "value": 1,
+                "problem_time_from": int((now - timedelta(days=self.config["history_days"])).timestamp()),
+                "problem_time_till": int(now.timestamp()),
+                "output": ["eventid", "objectid", "name", "severity", "clock", "acknowledged", "suppressed", "r_eventid"],
+                "selectHosts": ["hostid"], "selectSuppressionData": "extend",
+                "sortfield": "eventid", "sortorder": "ASC", "limit": 500}
+            raw_problems = []
+            while True:
+                page = self.call("event.get", params)
+                raw_problems.extend(page)
+                if len(page) < params["limit"]:
+                    break
+                next_id = str(int(page[-1]["eventid"]) + 1)
+                if int(next_id) <= int(params.get("eventid_from", "0")):
+                    raise ZabbixError("Zabbix history pagination failed")
+                params["eventid_from"] = next_id
+            recovery_ids = sorted({p["r_eventid"] for p in raw_problems if p["r_eventid"] != "0"})
+            recoveries = {}
+            for offset in range(0, len(recovery_ids), 500):
+                rows = self.call("event.get", {"eventids": recovery_ids[offset:offset + 500],
+                                               "output": ["eventid", "clock"]})
+                recoveries.update({row["eventid"]: datetime.fromtimestamp(int(row["clock"]), timezone.utc)
+                                   for row in rows})
+            if set(recovery_ids) - recoveries.keys():
+                raise ZabbixError("Zabbix recovery events are missing or inaccessible; retry the sync")
             problems = {}
             for problem in raw_problems:
-                ids = trigger_hosts.get(problem["objectid"])
+                ids = sorted({host["hostid"] for host in problem["hosts"]} & hostids)
                 if not ids:
                     raise ZabbixError("Zabbix problem hosts could not be resolved; retry the sync")
                 severity = int(problem["severity"])
@@ -97,6 +124,7 @@ class ZabbixClient:
                 problems[problem["eventid"]] = dict(eventid=problem["eventid"], triggerid=problem["objectid"],
                     name=problem["name"], severity=severity,
                     started_at=datetime.fromtimestamp(int(problem["clock"]), timezone.utc), hostids=ids,
+                    resolved_at=recoveries.get(problem["r_eventid"]),
                     acknowledged=problem["acknowledged"] == "1",
                     suppressed=problem.get("suppressed") == "1" or bool(problem.get("suppression_data")))
             return hosts, list(problems.values())
@@ -151,7 +179,8 @@ class ZabbixSyncManager:
                 state.last_attempt, state.last_success, state.error = attempted, datetime.now(timezone.utc), None
                 session.add(state)
                 session.commit()
-            LOG.info("Zabbix sync completed: %s hosts, %s open problems", len(hosts), len(problems))
+            LOG.info("Zabbix sync completed: %s hosts, %s problems (%s open)", len(hosts), len(problems),
+                     sum(problem.get("resolved_at") is None for problem in problems))
         except Exception as exc:
             LOG.warning("Zabbix sync failed: %s", type(exc).__name__)
             with self.sessions() as session:

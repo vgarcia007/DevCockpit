@@ -358,7 +358,7 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
         with sessions() as session:
             hosts = session.scalars(select(ZabbixHost).where(ZabbixHost.host.in_(selection))).all()
             problems = session.scalars(select(ZabbixProblem).order_by(
-                ZabbixProblem.severity.desc(), ZabbixProblem.started_at.desc())).all()
+                ZabbixProblem.started_at.desc(), ZabbixProblem.severity.desc())).all()
         by_id = {host.hostid: host for host in hosts}
         for host in hosts:
             host.environment = selection[host.host]["environment"]
@@ -442,7 +442,8 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
         attention_tickets = otrs_attention_tickets()
         _, zabbix_problems = monitoring_data()
         monitoring_attention = [problem for problem in zabbix_problems
-                                if problem.severity >= zabbix_config["attention_min_severity"]] if zabbix_manager else []
+                                if problem.resolved_at is None and
+                                problem.severity >= zabbix_config["attention_min_severity"]] if zabbix_manager else []
         github_attention = lead_attention(open_issues, open_pulls)
         return render_template("home.html", **common(repos, meta), attention=github_attention,
             attention_tickets=attention_tickets,
@@ -694,8 +695,13 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
         if not zabbix_manager:
             abort(404)
         hosts, problems = monitoring_data()
-        filters = {key: request.args.get(key, "").strip() for key in ("host", "environment", "severity", "q")}
+        filters = {key: request.args.get(key, "").strip() for key in ("host", "environment", "severity", "q", "status")}
+        if filters["status"] not in ("", "open", "resolved"):
+            abort(400)
         visible = problems
+        if filters["status"]:
+            visible = [problem for problem in visible
+                       if (problem.resolved_at is None) == (filters["status"] == "open")]
         if filters["host"] or filters["environment"]:
             visible = [problem for problem in visible if any(
                 (not filters["host"] or host.host == filters["host"]) and
@@ -712,12 +718,13 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
                  *[host.host for host in problem.hosts]]).casefold()]
         cached = {host.host: host for host in hosts}
         cards = [{"config": config, "host": cached.get(config["host"]),
-                  "problem_count": sum(any(host.host == config["host"] for host in problem.hosts) for problem in problems)}
+                  "problem_count": sum(problem.resolved_at is None and
+                      any(host.host == config["host"] for host in problem.hosts) for problem in problems)}
                  for config in zabbix_config["hosts"]]
         repos, _, _, _, meta = snapshot()
         return render_template("monitoring.html", **common(repos, meta), problems=visible,
                                host_cards=cards, filters=filters, severities=SEVERITIES,
-                               zabbix_running=zabbix_manager.running)
+                               zabbix_running=zabbix_manager.running, history_days=zabbix_config["history_days"])
 
     @app.get("/board")
     def board():

@@ -88,7 +88,8 @@ def load_config(path=None):
                 raise ValueError("zabbix.url must use HTTPS")
             zabbix.setdefault("interval_seconds", 60)
             zabbix.setdefault("attention_min_severity", 0)
-            for key, minimum, maximum in (("interval_seconds", 60, None), ("attention_min_severity", 0, 5)):
+            zabbix.setdefault("history_days", 30)
+            for key, minimum, maximum in (("interval_seconds", 60, None), ("attention_min_severity", 0, 5), ("history_days", 1, 365)):
                 value = zabbix[key]
                 if not isinstance(value, int) or isinstance(value, bool) or value < minimum or (maximum is not None and value > maximum):
                     raise ValueError(f"Invalid zabbix.{key}")
