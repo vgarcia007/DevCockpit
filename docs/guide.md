@@ -50,7 +50,7 @@ team:
 
 Team also shows issues assigned to those people in other repositories visible to your `gh` account. Those repositories do not have to be configured. Their issues stay separate from the configured Project workflow. If this search fails or is incomplete, the person card shows a warning.
 
-**My work** (`/work`) opens with `github.username` and can switch to any configured team member. It lists open assigned issues from configured and other accessible repositories, open PRs created by or assigned to the person, requested reviews, and matching OTRS tickets.
+**My work** (`/work`) opens with `github.username` and can switch to any configured team member. Its first work section highlights assigned open issues in the configured In Progress status (for example, Doing). Below it are all open assigned issues from configured and other accessible repositories, open PRs created by or assigned to the person, requested reviews, and matching OTRS tickets.
 
 `otrs_user` matches the OTRS **Besitzer** (owner) or **Verantwortlicher** (responsible) login or email; the responsible email's part before `@` can also match. Matching ignores case. Give each person a unique mapping. Add yourself to `team` with `otrs_user` if you want your tickets in My work.
 

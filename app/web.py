@@ -616,7 +616,10 @@ def create_app(config_path=None, database_path=None, auto_sync=True, credential_
         external = [issue for issue in external if issue.repository_name.casefold() not in configured_full_names]
         return render_template("work.html", **common(repos, meta), person=person,
                                people=sorted(people.values(), key=team_sort_key), own_login=own_login,
-                               issues=assigned, external=external, external_sync=external_sync,
+                               issues=assigned,
+                               in_progress=[issue for issue in assigned if status(issue, "in_progress")],
+                               in_progress_label=cfg["workflow"]["values"].get("in_progress", "In Progress"),
+                               external=external, external_sync=external_sync,
                                authored=authored, reviews=reviews, tickets=tickets,
                                otrs_state=otrs_state,
                                otrs_url=otrs_config["url"].rstrip("/") + "/index.pl" if otrs_manager else None)

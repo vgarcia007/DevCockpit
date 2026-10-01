@@ -767,3 +767,47 @@ def test_sync_isolated_repos_cache_rebuild_and_views(tmp_path, monkeypatch):
         broken_timeline = client.get("/releases?repo=Broken").get_data(as_text=True).split('class="release-timeline-section"', 1)[1]
         assert 'data-release-node="33"' in broken_timeline
         assert 'data-release-node="30"' not in broken_timeline
+
+
+def test_my_work_highlights_selected_persons_configured_doing_issues(tmp_path):
+    config = json.loads(json.dumps(CFG))
+    config["workflow"]["values"]["in_progress"] = "Doing"
+    config["team"].append({"github": "bob", "name": "Bob"})
+    path = tmp_path / "config.yml"
+    path.write_text(json.dumps(config))
+    database = tmp_path / "work.sqlite"
+    app = create_app(path, database, auto_sync=False)
+    now = datetime.now(timezone.utc)
+    rows = [
+        (1, "Alice doing", ["ALICE"], "open", "Doing", "known"),
+        (2, "Alice ready", ["alice"], "open", "Ready", "known"),
+        (3, "Alice closed", ["alice"], "closed", "Doing", "known"),
+        (4, "Alice unavailable", ["alice"], "open", "Doing", "unavailable"),
+        (5, "Bob doing", ["bob"], "open", "Doing", "known"),
+    ]
+    with make_session(database)() as session:
+        for number, title, assignees, state, workflow, workflow_state in rows:
+            session.add(Issue(github_id=number, repository_name="One", number=number,
+                title=title, url=f"https://github.com/acme/one/issues/{number}",
+                state=state, assignees=assignees, labels=[], created_at=now, updated_at=now,
+                workflow=workflow, workflow_state=workflow_state))
+        session.commit()
+    client = app.test_client()
+    for url, expected in [("/work", "Alice doing"), ("/work?person=bob", "Bob doing")]:
+        response = client.get(url)
+        assert response.status_code == 200
+        page = response.get_data(as_text=True)
+        section = page.split('id="work-in-progress"', 1)[1].split('</section>', 1)[0]
+        assert '<h2>Doing <span>1</span>' in section
+        assert expected in section
+        for _, title, *_ in rows:
+            if title != expected:
+                assert title not in section
+        assert page.index('id="work-in-progress"') < page.index('<h2>Assigned issues')
+    with make_session(database)() as session:
+        session.get(Issue, 1).state = "closed"
+        session.commit()
+    page = client.get("/work").get_data(as_text=True)
+    section = page.split('id="work-in-progress"', 1)[1].split('</section>', 1)[0]
+    assert '<h2>Doing <span>0</span>' in section
+    assert 'No assigned issues currently in progress.' in section
