@@ -8,7 +8,7 @@ from calendar import month_abbr, monthrange
 from datetime import datetime, timedelta, timezone
 from math import ceil
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from zoneinfo import ZoneInfo
 from flask import Flask, abort, redirect, render_template, request, url_for, jsonify, session as browser_session
 from sqlalchemy import and_, delete, func, or_, select
@@ -139,6 +139,99 @@ def brief_as_text(attention, team, reviews, ready, shipped, cards, last_sync, at
 def brief_with_prompt(brief_text, prompt_path=None):
     path = Path(prompt_path or ROOT / "brief_prompt.txt")
     return path.read_text(encoding="utf-8").rstrip() + "\n\n" + brief_text
+
+
+def wiki_as_markdown(repos, issues, releases, backlog_status, last_sync, now=None,
+                     attention_tickets=None, otrs_url=None, otrs_last_sync=None, otrs_error=None):
+    """Export source facts for manual wiki updates, without inferring deployment."""
+    now = now or datetime.now(timezone.utc)
+
+    def utc(value):
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+    now = utc(now)
+    since = now - timedelta(days=30)
+
+    def md(value):
+        value = " ".join(str(value or "").split())
+        value = value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return re.sub(r"([\\`*_{}\[\]()#+.!|~\-])", r"\\\1", value)
+
+    def link(label, url):
+        return f"[{md(label)}]({quote(url, safe='/:#?=&%+@~;')})"
+
+    def recent(value):
+        return value is not None and since <= utc(value) <= now
+
+    lines = ["## Development", "", f"Export: {fmt_time(now)} · Letzter GitHub-Sync: {fmt_time(last_sync)}",
+             "", "Ergänzungsentwurf aus Cockpit-Daten. Geschlossene Issues und Releases bestätigen keinen produktiven Deploy.", ""]
+    if attention_tickets is not None:
+        lines.extend([f"Letzter OTRS-Sync: {fmt_time(otrs_last_sync)}", ""])
+        if otrs_error:
+            lines.append(f"> OTRS-Syncfehler: {md(otrs_error)}. Ticketdaten können unvollständig oder veraltet sein.")
+    repos = sorted(repos, key=lambda repo: (repo.name.casefold(), repo.name))
+    for repo in repos:
+        if repo.error:
+            lines.append(f"> Syncfehler bei {md(repo.name)}: {md(repo.error)}. Daten können unvollständig oder veraltet sein.")
+    lines.extend(["", "### aktuell in Arbeit", "", "**Allgemein:**", "",
+                  "- [ ] Manuell ergänzen: Termine, Freigaben, Abhängigkeiten und weitere Aufgaben."])
+    if attention_tickets is not None:
+        lines.extend(["", "#### OTRS – Handlungsbedarf", ""])
+        for ticket in sorted(attention_tickets, key=lambda item: (item.queue.casefold(), item.queue, item.number)):
+            url = f"{otrs_url}?Action=AgentTicketZoom;TicketNumber={quote(str(ticket.number), safe='')}"
+            details = [f"Queue: {md(ticket.queue)}", f"Status: {md(ticket.state)}",
+                       f"Priorität: {md(ticket.priority)}"]
+            if ticket.owner:
+                details.append(f"Besitzer: {md(ticket.owner)}")
+            if ticket.responsible:
+                details.append(f"Verantwortlich: {md(ticket.responsible)}")
+            lines.append(f"- [ ] {link(f'{ticket.subject} (OTRS {ticket.number})', url)} · " + " · ".join(details))
+        if not attention_tickets:
+            lines.append("Keine aktiven Tickets aus den konfigurierten Attention-Queues im vorhandenen Datenbestand.")
+    groups = {"active": {}, "backlog": {}, "done": {}}
+    names = {repo.name for repo in repos}
+    for issue in issues:
+        if issue.repository_name not in names:
+            continue
+        if issue.state == "open":
+            group = "backlog" if issue.workflow_state == "known" and issue.workflow == backlog_status else "active"
+        elif issue.state == "closed" and recent(issue.closed_at):
+            group = "done"
+        else:
+            continue
+        groups[group].setdefault(issue.repository_name, []).append(issue)
+
+    status_names = {"not_in_project": "Nicht im Project", "no_status": "Kein Status"}
+    for group, heading in (("active", None), ("backlog", "Backlog"), ("done", "erledigt – letzte 30 Tage")):
+        if heading:
+            lines.extend(["", f"### {heading}"])
+        populated = False
+        for repo in repos:
+            rows = groups[group].get(repo.name, [])
+            shipped = [release for release in releases if group == "done" and
+                       release.repository_name == repo.name and not release.draft and recent(release.published_at)]
+            if not rows and not shipped:
+                continue
+            populated = True
+            lines.extend(["", f"**{md(repo.name)}:**", ""])
+            for issue in sorted(rows, key=lambda item: item.number):
+                details = []
+                if group == "done":
+                    details.append(f"Geschlossen: {fmt_date(issue.closed_at)}")
+                else:
+                    status = issue.workflow if issue.workflow_state == "known" else status_names.get(issue.workflow_state, "Status nicht verfügbar")
+                    details.append(f"Status: {md(status)}")
+                if issue.assignees:
+                    details.append("Verantwortlich: " + ", ".join(md(login) for login in sorted(issue.assignees)))
+                lines.append(f"- [{'x' if group == 'done' else ' '}] {link(f'{issue.title} (#{issue.number})', issue.url)} · " + " · ".join(details))
+            if shipped:
+                lines.extend(["", "Veröffentlichte GitHub-Releases:", ""])
+                for release in sorted(shipped, key=lambda item: (utc(item.published_at), item.tag), reverse=True):
+                    suffix = " · Vorabversion" if release.prerelease else ""
+                    lines.append(f"- {link(release.tag, release.url)} · {fmt_date(release.published_at)}{suffix}")
+        if not populated:
+            lines.extend(["", "Keine passenden GitHub-Einträge im vorhandenen Datenbestand."])
+    return "\n".join(lines).strip() + "\n"
 
 
 def team_sort_key(person):
@@ -393,6 +486,7 @@ def create_app(config_path=None, database_path=None, auto_sync=True, credential_
                     "error": sync_manager.account_error} for provider, sync_manager in integration_managers.items()
                     if sync_manager and sync_manager.account_state],
                 "otrs_last_success": otrs_state.last_success if otrs_state else None,
+                "otrs_sync_error": otrs_state.error if otrs_state else None,
                 "zabbix_enabled": zabbix_enabled, "zabbix_state": zabbix_state,
                 "zabbix_revision": zabbix_state.last_attempt.isoformat() if zabbix_state and zabbix_state.last_attempt else "",
                 "sync_running": manager.running, "github_user": cfg.get("github", {}).get("username", ""),
@@ -558,8 +652,14 @@ def create_app(config_path=None, database_path=None, auto_sync=True, credential_
                     reviews=[p for p in open_pulls if p.review_state in ("Waiting for Review", "Changes Requested", "Approval before latest commit")],
                     ready=ready, shipped=recent_releases(releases), cards=repo_cards(repos, issues, pulls, releases))
         shared = common(repos, meta)
+        otrs_url = otrs_config["url"].rstrip("/") + "/index.pl" if otrs_manager else None
         return render_template("brief.html", **shared, **view,
-                               otrs_url=otrs_config["url"].rstrip("/") + "/index.pl" if otrs_manager else None,
+                               wiki_export_text=wiki_as_markdown(repos, issues, releases,
+                                   cfg["workflow"]["values"]["backlog"], shared["last_sync"],
+                                   attention_tickets=view["attention_tickets"] if otrs_manager else None,
+                                   otrs_url=otrs_url, otrs_last_sync=shared["otrs_last_success"],
+                                   otrs_error=shared["otrs_sync_error"]),
+                               otrs_url=otrs_url,
                                brief_export_text=brief_with_prompt(
                                    brief_as_text(**view, last_sync=shared["last_sync"])))
 

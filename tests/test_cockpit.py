@@ -11,7 +11,7 @@ from app.github import GitHubCliClient, GitHubError, project_items
 from app.changes import detect_changes
 from app.models import ExternalTeamIssue, ExternalTeamSync, Issue, ObservedChange, Pull, Release, Repository, SyncMeta, UserAvatar, make_session
 from app.sync import SyncManager, ci_state, issue_data, issue_field_priorities, pull_data, review_state, search_assigned_issues
-from app.web import age_days, brief_as_text, brief_with_prompt, create_app, github_project_url, in_statistics_week, latest_releases, published_releases, release_timeline, release_window_start, statistics_week_bounds, workflow_readable
+from app.web import age_days, brief_as_text, brief_with_prompt, create_app, github_project_url, in_statistics_week, latest_releases, published_releases, release_timeline, release_window_start, statistics_week_bounds, wiki_as_markdown, workflow_readable
 
 
 CFG = {
@@ -311,6 +311,80 @@ def test_brief_prompt_is_read_from_file_each_time(tmp_path):
         "First instruction\n\nHere is the data:\n\nBRIEF\n- One #10\n")
     prompt.write_text("Updated instruction", encoding="utf-8")
     assert brief_with_prompt("BRIEF\n", prompt).startswith("Updated instruction\n\nBRIEF")
+
+
+def test_wiki_export_groups_complete_issue_list_and_escapes_markdown():
+    repo = SimpleNamespace(name="One", error="Failed <sync>\nretry")
+    rows = [Issue(repository_name="One", number=n, title=f"Task {n}",
+                  url=f"https://github.com/acme/one/issues/{n}", state="open",
+                  workflow="Doing", workflow_state="known", assignees=["bob", "alice"])
+            for n in range(1, 8)]
+    rows[0].title = "Fix [login] *now*\n<script>"
+    rows[0].url = "https://example.com/a(b)?x=hello world"
+    rows[1].workflow = "Backlog"
+    rows[2].workflow_state = "unavailable"
+    rows[3].workflow_state = "not_in_project"
+    rows[4].workflow_state = "no_status"
+    rows[5].workflow = "Done"  # An open issue remains unchecked, even in Done.
+    rows.append(Issue(repository_name="Other", number=99, title="External", state="open"))
+    result = wiki_as_markdown([repo], rows[::-1], [], "Backlog", None)
+    active, rest = result.split("### Backlog")
+    backlog, done = rest.split("### erledigt – letzte 30 Tage")
+    assert result.count("- [ ] [") == 7
+    assert "Task 2" in backlog and "Task 2" not in active
+    assert "Task 6" in active and "Status: Done" in active
+    assert "Status nicht verfügbar" in active and "Nicht im Project" in active and "Kein Status" in active
+    assert "Verantwortlich: alice, bob" in active
+    assert r"Fix \[login\] \*now\* &lt;script&gt;" in active
+    assert "https://example.com/a%28b%29?x=hello%20world" in active
+    assert "External" not in result
+    assert "Failed &lt;sync&gt; retry" in result
+    assert "Manuell ergänzen" in active and "Keine passenden GitHub-Einträge" in done
+    assert result == wiki_as_markdown([repo], rows, [], "Backlog", None)
+
+
+def test_wiki_export_recent_closed_issues_and_releases_use_inclusive_time_window():
+    now = datetime(2026, 10, 1, 12, tzinfo=timezone.utc)
+    boundary = now - timedelta(days=30)
+    repo = SimpleNamespace(name="One", error=None)
+    def issue(n, closed_at, state="closed"):
+        return Issue(repository_name="One", number=n, title=f"Issue {n}",
+                     url=f"https://example.com/issues/{n}", state=state,
+                     closed_at=closed_at, workflow_state="unavailable", assignees=[])
+    rows = [issue(1, boundary.replace(tzinfo=None)), issue(2, boundary - timedelta(seconds=1)),
+            issue(3, now), issue(4, now + timedelta(seconds=1)), issue(5, None),
+            issue(6, boundary, "open")]
+    def release(tag, date, draft=False, prerelease=False):
+        return Release(repository_name="One", tag=tag, url=f"https://example.com/{tag}",
+                       published_at=date, draft=draft, prerelease=prerelease)
+    releases = [release("boundary", boundary), release("old", boundary - timedelta(seconds=1)),
+                release("draft", now, draft=True), release("unpublished", None),
+                release("preview", now, prerelease=True), release("future", now + timedelta(seconds=1))]
+    result = wiki_as_markdown([repo], rows, releases, "Backlog", now, now)
+    done = result.split("### erledigt – letzte 30 Tage")[1]
+    assert done.count("- [x]") == 2
+    assert "Issue 1" in done and "Issue 3" in done
+    assert all(f"Issue {n}" not in done for n in (2, 4, 5, 6))
+    assert "Issue 6" in result.split("### Backlog")[0]
+    assert "[boundary]" in done and "[preview]" in done and "Vorabversion" in done
+    assert all(f"[{tag}]" not in done for tag in ("old", "draft", "unpublished", "future"))
+    assert "Veröffentlichte GitHub-Releases:" in done
+    assert "bestätigen keinen produktiven Deploy" in result
+    assert "Letzter GitHub-Sync: 01.10.2026 14:00" in result
+
+
+def test_wiki_export_empty_data_retains_editable_structure():
+    result = wiki_as_markdown([], [], [], "Backlog", None)
+    assert result.startswith("## Development\n")
+    assert "### aktuell in Arbeit" in result and "### Backlog" in result
+    assert "### erledigt – letzte 30 Tage" in result
+    assert result.count("Keine passenden GitHub-Einträge") == 3
+    assert "Manuell ergänzen" in result
+    assert "OTRS" not in result
+    enabled = wiki_as_markdown([], [], [], "Backlog", None, attention_tickets=[],
+                               otrs_url="https://tickets.example.com/index.pl")
+    assert "#### OTRS – Handlungsbedarf" in enabled
+    assert "Keine aktiven Tickets" in enabled
 
 
 def test_team_page_orders_people_by_display_name(tmp_path):
@@ -660,6 +734,10 @@ def test_sync_isolated_repos_cache_rebuild_and_views(tmp_path, monkeypatch):
         brief_html = brief.get_data(as_text=True)
         assert 'id="brief-copy-prompt"' in brief_html
         assert 'id="brief-export-text" hidden' in brief_html
+        assert 'id="brief-copy-wiki" data-copy-field="wiki-export-text"' in brief_html
+        assert 'id="wiki-export-text" hidden' in brief_html
+        assert "Wiki-Update kopieren" in brief_html
+        assert "## Development\n" in brief_html
         assert 'id="brief-export-panel"' not in brief_html
         assert brief_html.index("Erstelle aus dem folgenden technischen Arbeitsstand") < brief_html.index("Hier sind die Rohdaten:") < brief_html.index("BRIEF\n")
         assert client.get("/team").status_code == 200

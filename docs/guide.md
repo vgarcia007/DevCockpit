@@ -145,6 +145,8 @@ Back up both account files together. If the key is lost or storage damaged, rest
 | **Search** | Cached issues and PRs, plus a separate ticket section when enabled. |
 | **Brief** (`/brief`) | A compact text summary. **Copy as prompt** copies [`brief_prompt.txt`](../brief_prompt.txt) and the summary; it sends nothing to an AI service. |
 
+**Wiki-Update kopieren** on Brief copies German Markdown for manual wiki updates, without an AI request. It groups all cached issues from configured GitHub repositories by project: open issues with the configured Backlog status go under Backlog, other open issues under current work with their actual status. Closed issues and published releases cover the last 30 days; prereleases are marked and drafts excluded. Entries include source links and issue assignees. The export includes its date, last GitHub sync, sync errors, and a placeholder for meetings, approvals and dependencies. Closed issues and releases do not confirm a production deployment. When OTRS is enabled, the export also includes all active tickets from `attention_queue_ids` under **OTRS – Handlungsbedarf**, using the same `excluded_states` filter as Brief. Tickets include source links, queues, statuses, priorities, owners and responsible agents, plus the last OTRS sync and any sync error. Active tickets are included regardless of age. Existing wiki content and annual archives are not read or replaced; external team repositories are not included.
+
 ### Need attention
 
 This is a view of the latest synced state. It includes:

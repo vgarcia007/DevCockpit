@@ -325,9 +325,8 @@ if (themeToggle) {
   });
 }
 
-const briefCopyPrompt = document.getElementById('brief-copy-prompt');
-if (briefCopyPrompt) {
-  const field = document.getElementById('brief-export-text');
+const briefCopyButtons = document.querySelectorAll('[data-copy-field]');
+if (briefCopyButtons.length) {
   const status = document.getElementById('brief-copy-status');
   const fallbackCopy = value => {
     const scratch = document.createElement('textarea');
@@ -343,7 +342,14 @@ if (briefCopyPrompt) {
       scratch.remove();
     }
   };
-  briefCopyPrompt.addEventListener('click', async () => {
+  briefCopyButtons.forEach(button => button.addEventListener('click', async () => {
+    const field = document.getElementById(button.dataset.copyField);
+    if (!field?.value.trim()) {
+      status.textContent = 'Export fehlt. DevCockpit neu starten und Seite neu laden.';
+      status.classList.add('is-error');
+      button.focus();
+      return;
+    }
     let copied = false;
     if (navigator.clipboard?.writeText) {
       try {
@@ -356,8 +362,8 @@ if (briefCopyPrompt) {
     }
     status.textContent = copied ? 'Copied' : 'Copy blocked by browser';
     status.classList.toggle('is-error', !copied);
-    briefCopyPrompt.focus();
-  });
+    button.focus();
+  }));
 }
 
 const teamSearch = document.getElementById('team-search');

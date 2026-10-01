@@ -7,9 +7,10 @@
 <div class="cto-page">
   <header class="cto-intro">
     <div><div class="eyebrow">For the conversation</div><h1>Brief</h1><p>What is moving, what needs attention, and what is ready.</p></div>
-    <div class="brief-actions"><span class="data-note">Last sync {{ last_sync|datetime if last_sync else 'pending' }}</span><button class="brief-export-button" id="brief-copy-prompt" type="button">{{ icon('clipboard-list') }}<span>Copy as prompt</span></button><span class="brief-copy-status" id="brief-copy-status" role="status" aria-live="polite"></span></div>
+    <div class="brief-actions"><span class="data-note">Last sync {{ last_sync|datetime if last_sync else 'pending' }}</span><button class="brief-export-button" id="brief-copy-prompt" data-copy-field="brief-export-text" type="button">{{ icon('clipboard-list') }}<span>Copy as prompt</span></button><button class="brief-export-button" id="brief-copy-wiki" data-copy-field="wiki-export-text" type="button">{{ icon('clipboard-list') }}<span>Wiki-Update kopieren</span></button><span class="brief-copy-status" id="brief-copy-status" role="status" aria-live="polite"></span></div>
   </header>
   <textarea id="brief-export-text" hidden aria-hidden="true" tabindex="-1">{{ brief_export_text }}</textarea>
+  <textarea id="wiki-export-text" hidden aria-hidden="true" tabindex="-1">{{ wiki_export_text }}</textarea>
   <div class="cto-grid">
     <div class="cto-column">
       <section class="cto-section">

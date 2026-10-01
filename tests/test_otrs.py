@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from html import unescape
 from types import SimpleNamespace
 
 import pytest
@@ -280,6 +281,12 @@ def test_home_attention_lists_only_selected_otrs_queues(tmp_path):
             OTRSTicket(number="444", subject="Already closed", queue="Support::Portal", queue_id=1,
                        state="geschlossen", priority="3 normal", owner="alice", created_at=datetime(2026, 9, 25)),
         ])
+        session.add_all([OTRSTicket(number=str(500 + n), subject=f"Extra attention {n}",
+                                   queue="Support::Portal", queue_id=1, state="offen",
+                                   priority="2 high", owner="alice", responsible="bob",
+                                   created_at=datetime(2025, 1, 1)) for n in range(5)])
+        session.add(OTRSSyncState(key="tickets", last_success=datetime(2026, 9, 28, 12),
+                                  error="OTRS temporarily unavailable"))
         session.commit()
     response = app.test_client().get("/")
     assert response.status_code == 200
@@ -291,6 +298,17 @@ def test_home_attention_lists_only_selected_otrs_queues(tmp_path):
     assert brief.status_code == 200
     assert b"OTRS need attention" in brief.data and b"Portal needs help" in brief.data
     assert b"OTRS NEED ATTENTION" in brief.data
+    wiki = unescape(brief.get_data(as_text=True).split('id="wiki-export-text"')[1].split('>', 1)[1].split('</textarea>', 1)[0])
+    assert "#### OTRS – Handlungsbedarf" in wiki
+    assert "Portal needs help" in wiki and "Development needs help" in wiki
+    assert "Ordinary ticket" not in wiki and "Already closed" not in wiki
+    assert wiki.count("- [ ] [") == 7  # Includes old active tickets, beyond Brief's four-item limit.
+    assert all(f"Extra attention {n}" in wiki for n in range(5))
+    assert "https://tickets.example.com/index.pl?Action=AgentTicketZoom;TicketNumber=111" in wiki
+    assert "Queue: Support::Portal" in wiki and "Status: offen" in wiki
+    assert "Priorität: 2 high" in wiki and "Besitzer: alice" in wiki and "Verantwortlich: bob" in wiki
+    assert "Letzter OTRS-Sync: 28.09.2026 14:00" in wiki
+    assert "OTRS-Syncfehler: OTRS temporarily unavailable" in wiki
 
 
 def test_sync_observes_entry_change_and_completion_once(tmp_path, monkeypatch):
