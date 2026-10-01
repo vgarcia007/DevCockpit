@@ -5,8 +5,20 @@ document.querySelectorAll('a[href]').forEach(link => {
   }
 });
 
+const viewRestoreKey = 'cockpit-view-update-position';
+let viewRestore = null;
+try {
+  const saved = JSON.parse(sessionStorage.getItem(viewRestoreKey) || 'null');
+  sessionStorage.removeItem(viewRestoreKey);
+  const age = Date.now() - saved?.savedAt;
+  if (saved?.url === location.href && age >= 0 && age < 10000 &&
+      Number.isFinite(saved.scrollX) && Number.isFinite(saved.scrollY)) viewRestore = saved;
+} catch (_) {}
+
 const syncLabel = document.getElementById('sync-label');
 if (syncLabel) {
+  const updateNotice = document.getElementById('view-update-notice');
+  const updateButton = document.getElementById('view-update-button');
   const renderedGitHubSync = syncLabel.dataset.lastSuccess || '';
   const renderedOtrsSync = syncLabel.dataset.otrsLastSuccess || '';
   const renderedZabbixRevision = syncLabel.dataset.zabbixRevision || '';
@@ -49,13 +61,23 @@ if (syncLabel) {
           (data.otrs_last_success || '') !== renderedOtrsSync ||
           (data.zabbix_revision || '') !== renderedZabbixRevision ||
           (syncWasRunning && !data.running)) {
-        window.location.reload();
-        return;
+        updateNotice.hidden = false;
       }
       syncWasRunning = data.running;
     } catch (_) { unavailable = true; }
     renderSources();
   };
+  updateButton.addEventListener('click', () => {
+    updateButton.disabled = true;
+    try {
+      sessionStorage.setItem(viewRestoreKey, JSON.stringify({
+        url: location.href, savedAt: Date.now(), scrollX: window.scrollX, scrollY: window.scrollY,
+        sidebarScroll: document.querySelector('.sidebar-nav')?.scrollTop || 0,
+      }));
+      sessionStorage.removeItem('cockpit-auto-filter-focus');
+    } catch (_) {}
+    window.location.reload();
+  });
   for (const row of rows.values()) {
     row.addEventListener('keydown', event => {
       if (event.key === 'Escape') row.dataset.tooltipDismissed = 'true';
@@ -389,7 +411,7 @@ for (const form of document.querySelectorAll('form[data-auto-filter]')) {
 try {
   const saved = JSON.parse(sessionStorage.getItem(filterFocusKey) || 'null');
   sessionStorage.removeItem(filterFocusKey);
-  if (saved?.path === location.pathname && Date.now() - saved.savedAt < 10000) {
+  if (!viewRestore && saved?.path === location.pathname && Date.now() - saved.savedAt < 10000) {
     requestAnimationFrame(() => {
       const form = document.querySelector('form[data-auto-filter]');
       const input = form?.elements.namedItem(saved.name);
@@ -404,6 +426,25 @@ try {
     });
   }
 } catch (_) {}
+
+if (viewRestore) {
+  let interactedAfterRestore = false;
+  for (const event of ['wheel', 'touchstart', 'pointerdown', 'keydown']) {
+    window.addEventListener(event, () => { interactedAfterRestore = true; }, {once: true, passive: true});
+  }
+  const restoreViewPosition = () => {
+    const previousBehavior = document.documentElement.style.scrollBehavior;
+    document.documentElement.style.scrollBehavior = 'auto';
+    window.scrollTo(viewRestore.scrollX, viewRestore.scrollY);
+    const sidebarNav = document.querySelector('.sidebar-nav');
+    if (sidebarNav && Number.isFinite(viewRestore.sidebarScroll)) sidebarNav.scrollTop = viewRestore.sidebarScroll;
+    document.documentElement.style.scrollBehavior = previousBehavior;
+  };
+  requestAnimationFrame(restoreViewPosition);
+  window.addEventListener('load', () => {
+    if (!interactedAfterRestore) requestAnimationFrame(restoreViewPosition);
+  }, {once: true});
+}
 
 const releaseNodes = document.querySelectorAll('[data-release-node]');
 if (releaseNodes.length) {
