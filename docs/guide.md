@@ -1,10 +1,14 @@
 # Configuration and feature guide
 
-Start with the short [README](../README.md) and copy [`config.example.yml`](../config.example.yml) to your private `config.yml`.
+DevCockpit is a local, read-only dashboard. It reads GitHub through your signed-in `gh` CLI, and optionally reads OTRS tickets and Zabbix monitoring. It never edits issues, tickets, or monitoring configuration.
+
+For installation and a first start, follow the [README](../README.md). Copy [`config.example.yml`](../config.example.yml) to `config.yml`, replace the example values, then run `./start.sh`. Open [http://127.0.0.1:7777](http://127.0.0.1:7777). Keep the terminal running; `Ctrl+C` stops the app. Run `./start.sh` again after configuration changes to restart this checkout.
 
 ## GitHub repositories and Projects
 
-Each `repositories` entry has a unique display `name` and a `url` in `/owner/repo` form. Set `project_number` to the number at the end of a GitHub Projects v2 URL, such as `https://github.com/orgs/example-org/projects/7`, or use `null` for a repository without a Project. To use a user-owned Project, set `project_owner` to the person's login and `project_owner_type: user`. Otherwise, DevCockpit uses `github.organization` or the repository owner.
+Each `repositories` entry needs a unique display `name` and a `url` in `/owner/repo` form. At least one repository is required. Set `github.username` to your own GitHub login for My work and personal filters.
+
+Set `project_number` to the number at the end of a GitHub Projects v2 URL, such as `https://github.com/orgs/example-org/projects/7`, or use `null` for a repository without a Project. For a user-owned Project, also set `project_owner` to the person's login and `project_owner_type: user`. Otherwise, DevCockpit uses `project_owner`, `github.organization`, or the repository owner.
 
 All configured Projects use one workflow mapping. `workflow.status_field` is the Project's status field name. The values below must match its options exactly, including case:
 
@@ -19,48 +23,168 @@ workflow:
     done: Done
 ```
 
-Only Project status places an issue in a Board stage. Assigning someone does not mark it In Progress; opening a PR does not mark it In Review. Issues outside the Project show **Not in project**. Unreadable Projects or fields show **Unavailable**.
+Project status determines the workflow groups in Overview, Now, Team, and Issues. Assigning someone does not mark an issue In Progress; opening a PR does not mark it In Review. Issues outside the Project show **Not in project**. Unreadable Projects or fields show **Unavailable**. Open GitHub Project links to manage the actual boards; the former `/board` route redirects to Issues.
 
-Set `priority.source: project` to read a Project field, or `priority.source: issue_field` to read an organization Issue Field. `priority.field` is its exact name. These sources are separate; choose the one your team actually uses. The priority signal supports Urgent and High issues under **Need attention**.
+### Priority
 
-Add people under `team` to show their work in Team and Brief. Use their exact GitHub login. Team also lists issues assigned to them in other repositories visible to your `gh` account; you do not need to add those repositories to `repositories`. Those issues stay separate from the configured Project workflow and Board totals. `github.username` controls the personal quick filters; add yourself to `team` separately if you want a person section.
+Choose the source your team uses:
 
-**My work** (`/work`) opens with `github.username` and can show any configured team member. It lists open assigned issues from configured and other accessible repositories, open PRs created by or assigned to the person, requested reviews, and matching OTRS tickets. To map tickets, add `otrs_user` to each relevant `team` entry. The value matches the OTRS **Besitzer** (owner), **Verantwortlicher** (responsible) name or email address, or the part of the responsible email before `@`. Add your own GitHub login to `team` with `otrs_user` if you want your tickets in My work.
+```yaml
+priority:
+  source: issue_field # Or project for a Projects v2 field.
+  field: Priority
+```
 
-## GitHub access and sync
+`issue_field` reads an organization Issue Field on the issue itself. `project` reads a field on the Project item. The same field name in both places does not make them the same value. `priority.field` is the exact field name; **Urgent** and **High** are the values used for Need attention. Priority is refreshed during regular syncs, including when it changes on an existing issue.
 
-DevCockpit uses your local `gh` login to read repositories, issues, pull requests, checks, releases, and configured Projects. It uses `gh api` and `gh api graphql`; there is no separate GitHub token in `config.yml`. A missing Project scope may require `gh auth refresh -s read:project`. Repository-specific sync errors appear in the UI.
+### People and ticket assignments
 
-GitHub sync runs every `sync.interval_seconds` after the previous sync completes (default: 300 seconds; minimum: 10). The sidebar shows one status row per enabled source, with its next automatic sync. Hover or focus a row for the last successful sync and error details. Syncs do not reload the page automatically. An **Updates available** hint lets you choose when to show the latest data, preserving the current URL, filters, and scroll position. The hint indicates a newer sync snapshot, which may contain unchanged data. Conditional REST requests reuse cached responses when GitHub reports no change. When GitHub reports a rate limit, DevCockpit waits until the retry time and shows that in the sidebar. Configuration changes require a restart.
+Add people under `team` using their GitHub login and display name:
 
-To rebuild the local GitHub cache, stop the app, delete `instance/cockpit.sqlite`, and start it again. This also clears locally observed change history. It does not change GitHub data.
+```yaml
+team:
+  - github: example-login
+    name: Example Person
+    otrs_user: example-agent # Optional; omit when no OTRS mapping is needed.
+```
+
+Team also shows issues assigned to those people in other repositories visible to your `gh` account. Those repositories do not have to be configured. Their issues stay separate from the configured Project workflow. If this search fails or is incomplete, the person card shows a warning.
+
+**My work** (`/work`) opens with `github.username` and can switch to any configured team member. It lists open assigned issues from configured and other accessible repositories, open PRs created by or assigned to the person, requested reviews, and matching OTRS tickets.
+
+`otrs_user` matches the OTRS **Besitzer** (owner) or **Verantwortlicher** (responsible) login or email; the responsible email's part before `@` can also match. Matching ignores case. Give each person a unique mapping. Add yourself to `team` with `otrs_user` if you want your tickets in My work.
+
+Team cards on Overview and Team use two columns that pack cards vertically without stretching shorter cards. Smaller screens use one column. Team's person search filters these cards.
+
+## Sync and GitHub access
+
+DevCockpit uses `gh api` and `gh api graphql` with your existing GitHub CLI login. No GitHub token belongs in `config.yml`. Startup checks that `gh` is installed and authenticated before starting the app. Your account must be able to read each repository and Project. If Project access is missing, try `gh auth refresh -s read:project`.
+
+| Source | Interval setting | Default | Minimum |
+| --- | --- | --- | --- |
+| GitHub | `sync.interval_seconds` | 300 seconds | 10 seconds |
+| OTRS | `otrs.interval_seconds` | 900 seconds | 60 seconds |
+| Zabbix | `zabbix.interval_seconds` | 60 seconds | 60 seconds |
+
+Sources run independently. The next sync is scheduled after the previous run finishes. The sidebar shows a status and countdown for each enabled source. Hover or focus a row for the last successful sync and errors. Missing integration accounts pause that source until an account is saved; GitHub continues to work.
+
+Conditional GitHub REST requests reuse cached responses when GitHub reports no change. When GitHub reports a rate limit, DevCockpit waits until the retry time and shows the pause in the sidebar. Repository-specific errors appear in the UI; failed syncs keep the last successful data.
+
+Syncs do not reload the page automatically. An **Updates available** hint lets you choose when to show the latest data, preserving the URL, filters, and scroll position. The hint indicates a newer sync snapshot, which may contain unchanged data. The notification bell and sidebar continue updating while you work.
 
 ## Optional OTRS 5 tickets
 
-Add the commented `otrs` block from the example configuration and replace every example value. `enabled`, `url`, and `queue_ids` configure the integration. Enter the login under **Settings → Accounts**; credentials are encrypted outside the checkout. The URL must use HTTPS. `queue_ids` is a nonempty list of numeric OTRS queue IDs. The integration uses an agent session and the AgentTicketSearch CSV export. It does not save a search profile.
+Uncomment the `otrs` example in `config.yml`, then set your HTTPS frontend URL and queue IDs. Enter and verify your agent login in **Settings → Accounts** after starting the app. The integration uses an agent session and the AgentTicketSearch CSV export, without saving a search profile.
 
-`excluded_states` lists ticket status names to hide, ignoring case and surrounding spaces. Set this to the terminal states used by your installation. `attention_queue_ids` selects configured queues whose open tickets appear on the Overview and in notifications. `highlight_queue_ids` selects configured queues to emphasize in the ticket table. Both lists are empty by default. OTRS syncs independently every `otrs.interval_seconds` (default: 900 seconds; minimum: 60). Set `otrs.enabled: false` or remove the block to disable the integration; its cached tickets and OTRS notifications are cleared on restart.
+| Setting | Purpose |
+| --- | --- |
+| `enabled` | Set `false` to disable OTRS. Omitting the section also disables it. |
+| `url` | HTTPS frontend URL, including any installation path. |
+| `queue_ids` | Nonempty list of numeric queue IDs to read. |
+| `excluded_states` | Status names to hide from active ticket views, ignoring case and surrounding spaces. Use your installation's closed/merged states. |
+| `attention_queue_ids` | Configured queues whose active tickets appear in Need attention and notifications. Empty by default. |
+| `highlight_queue_ids` | Configured queues whose rows are emphasized in the ticket table. Empty by default. |
+| `interval_seconds` | Independent sync interval, as shown above. |
 
-When `otrs_user` mappings are configured, My work also reads the responsible agent for active tickets. If the OTRS CSV export has a **Verantwortlicher** or **Responsible** column, it uses that. Otherwise, it reads each active ticket's detail page. An OTRS administrator can add `Responsible` to `Ticket::Frontend::AgentTicketSearch###SearchCSVData` to avoid those extra detail requests.
+Tickets has its own searchable, filterable table. Ticket numbers open OTRS in a new tab. Tickets are separate from GitHub Issues. Person mappings add separate ticket groups to Overview, Now, Team, My work, and Brief; global Search also has a separate ticket section.
 
-The Tickets section is visible only when OTRS is enabled. It has its own table, search, filters, and ticket links. Ticket data is not included in the GitHub Issues or Board views.
-Mapped OTRS tickets also appear as separate groups on Overview, Now, Team, My work, and Brief. Brief's copied text includes those tickets. Global Search adds a separate ticket result section. When OTRS is disabled, these ticket sections disappear and the GitHub views continue to work.
+When mappings exist, the integration reads the responsible agent from the CSV's **Verantwortlicher** or **Responsible** column. If that column is missing, it reads each active ticket's detail page. An OTRS administrator can add `Responsible` to `Ticket::Frontend::AgentTicketSearch###SearchCSVData` to avoid those extra requests.
 
-## Views and notifications
+Disabling OTRS clears its local ticket cache and OTRS notifications on restart. Ticket sections disappear and GitHub views continue working. The saved account is retained for later use.
 
-- **Briefing** (`/`) shows observed changes, Need attention, team work, Ready issues, recent releases, and repository state.
-- **Brief** (`/brief`) provides a compact text summary. **Copy as prompt** copies [`brief_prompt.txt`](../brief_prompt.txt) followed by the summary to the clipboard; it does not send data to an AI service.
-- **Now**, **Team**, **Issues**, **Pull Requests**, **Repositories**, **Releases**, and **Board** show their respective GitHub data. Board has repository and assignee filters. Releases has a timeline with clickable notes.
-- **Search** searches cached issues and pull requests, plus tickets when OTRS is enabled. **Tickets** is the optional dedicated OTRS view.
+## Optional Zabbix 7.4 monitoring
 
-**Since your last visit** shows changes observed between successful GitHub syncs. You can mark individual items done and restore them in Completed. Those choices and your last visit are stored in this browser. Observed changes are kept in the local database for 30 days. Events that appear and disappear between syncs may not be seen.
+Uncomment the `zabbix` example and set the HTTPS frontend URL, including its installation path. List each application's exact technical host name with `environment: prod` or `environment: preprod`. Enter your normal username and password under **Settings → Accounts**; no API token is needed.
 
-The notification bell shows observed GitHub changes and changes in configured OTRS attention queues. Opening it clears the unread count. Browser alerts are optional, grouped, and work while the tab is open. Notification state is stored in this browser; the first visit does not alert on old history.
+The account must be allowed to use the API and read the selected hosts through `host.get`, `trigger.get`, and `event.get`. Password login requires an account without Zabbix MFA. The app logs out the API session after each sync.
 
-**Recently shipped** uses published GitHub Releases, including prereleases, from the selected period. Drafts and merged PRs are not counted as releases.
+**Monitoring → Applications** shows hosts and problem history. Search or filter by application, environment, severity, and open/resolved status. Acknowledged and suppressed problems remain visible. Resolved problems show their end time and duration, and links open Zabbix.
 
-## Local use
+| Setting | Purpose |
+| --- | --- |
+| `enabled` | Set `false` to disable Zabbix. Omitting the section also disables it. |
+| `url` | HTTPS frontend URL, including any installation path. |
+| `hosts` | Nonempty list of technical `host` names and their `environment`. |
+| `interval_seconds` | Independent sync interval, as shown above. |
+| `history_days` | History window, 1–365 days; default 30. Older problems still open are included too. |
+| `attention_min_severity` | Minimum severity for open problems in Need attention; default 0. |
 
-DevCockpit has no user login and listens on localhost by default. Use access control if you choose to expose it. `config.yml` and `instance/` are ignored by Git; keep the configuration and local database private. The app displays dates in the Europe/Berlin time zone.
+Severity values: `0` Not classified, `1` Information, `2` Warning, `3` Average, `4` High, `5` Disaster. Need attention includes open problems from both environments at or above the configured threshold. Acknowledgement does not resolve a problem.
 
-On Windows, start from a Windows terminal with [`start.bat`](../start.bat). Windows and WSL have separate Python environments and `gh` sessions. Keep the terminal open while using the app.
+History includes short incidents that started and ended between syncs, subject to Zabbix retention and account permissions. Failed syncs keep the last successful data. Zabbix problems are not currently included in the notification bell or weekly Statistics. Disabling Zabbix stops its sync and hides monitoring data after a restart; its saved account and local cache remain.
+
+## Accounts and storage
+
+Enabled OTRS and Zabbix integrations need an account in **Settings → Accounts**. The app tests the connection before saving; an invalid replacement keeps the previous account. Passwords are never displayed. Change or remove an account on the same page, after any running sync finishes. An account change clears that integration's cache and starts a fresh sync.
+
+Accounts survive restarts and are bound to their provider and server URL. Changing the URL requires an account for the new server. Disabling an integration retains its account.
+
+| Local file | Contents |
+| --- | --- |
+| `config.yml` | Repository, workflow, team, and integration settings; no passwords. |
+| `instance/cockpit.sqlite` | Cached source data and observed changes. |
+| `~/.local/share/devcockpit/accounts.enc` | Accounts encrypted with AES-256-GCM. |
+| `~/.config/devcockpit/account.key` | Random encryption key. |
+
+Account directories have permissions `0700`, files `0600`. There is no master password or OS keyring requirement. Anyone who can read both account files can decrypt the credentials. Cached tickets and issues are not encrypted; keep your OS account and files private.
+
+Back up both account files together. If the key is lost or storage damaged, restore the matching pair. To reset accounts, stop the app, remove both files, restart, and enter the accounts again. An existing encrypted file never gets a replacement key silently. Legacy `user` and `password` config fields are removed on startup without importing them; re-enter the accounts in the browser.
+
+## Views, attention, and notifications
+
+| View | What it shows |
+| --- | --- |
+| **Briefing / Overview** (`/`) | Observed changes, Need attention, team work, Ready issues, recent releases, and repository state. |
+| **My work** | Personal GitHub items and mapped tickets, with a person selector. |
+| **Now / Team** | Current work and each configured person's assignments. The activity dot indicates In Progress issues in configured Projects; hover or focus for details. |
+| **Issues** | GitHub issues with search and filters, including workflow and priority. |
+| **Pull Requests** | PRs, reviews, and CI status; the filter can hide Dependabot PRs. |
+| **Repositories** | Repository summaries and Project links. |
+| **Releases** | Published releases and a timeline; select a release to read its notes. |
+| **Statistics** | Weekly activity across repositories, plus optional OTRS ticket counts. |
+| **Search** | Cached issues and PRs, plus a separate ticket section when enabled. |
+| **Brief** (`/brief`) | A compact text summary. **Copy as prompt** copies [`brief_prompt.txt`](../brief_prompt.txt) and the summary; it sends nothing to an AI service. |
+
+### Need attention
+
+This is a view of the latest synced state. It includes:
+
+- Open issues with the configured priority **Urgent** or **High**.
+- Open issues whose Project status is Done.
+- Open PRs with failing CI, changes requested, waiting reviews, or approval before the latest commit.
+- Active OTRS tickets in `attention_queue_ids`, when OTRS is enabled.
+- Open Zabbix problems at the configured severity threshold, when Zabbix is enabled.
+
+An item disappears when a successful sync sees that its condition no longer applies, such as an issue being closed. Use **Show** when the update hint appears to refresh the visible page; a restart is not required.
+
+### Since your last visit and the bell
+
+**Since your last visit** shows GitHub changes observed between successful syncs, rather than all currently open work. It includes workflow moves, urgent priority, issue closure, PR/review/CI changes, and releases. Mark individual items done and restore them in **Completed**. Completion and visit state live in this browser. A new visit starts when you return after at least 30 minutes away from the tab or on a new day; reloading during the same visit keeps its comparison. The local database keeps observed changes for 30 days. The first visit starts the comparison; events that appear and disappear between GitHub syncs may not be seen.
+
+The notification bell shows observed GitHub changes and changes in configured OTRS attention queues, including new tickets, changes, and closure. Opening it clears the unread count. Browser alerts are optional and grouped; enable them in the bell menu and allow the browser permission. They work while the tab is open. Browser notification state is separate from the visit checklist, and the first visit does not alert on old history.
+
+**Recently shipped** uses published GitHub Releases, including prereleases, from the selected period. Drafts and merged PRs are not releases.
+
+### Weekly Statistics
+
+Weeks run Monday through Sunday in Europe/Berlin time. Statistics counts created issues, currently closed issues by closure date, merged PRs, and published releases. It combines repositories without assigning activity to people.
+
+By default, only configured repositories with a Project are included. Switch to **All configured repositories** to also include repositories without a Project; this does not include other repositories found through person assignments. Previous/next controls select a week.
+
+When OTRS is enabled, its configured queues contribute created and closed ticket counts independently of the GitHub repository filter. `excluded_states` also defines which ticket statuses count as closed. Tickets without a closure date cannot be assigned to a closure week; the page reports these separately. Counts reflect the latest synced records, not an immutable audit log; reopened issues or changed source records can change past counts.
+
+## Troubleshooting and local use
+
+| Symptom | What to check |
+| --- | --- |
+| App will not start | Confirm Python 3.10+, `venv`, `gh auth status`, and a valid `config.yml` with at least one repository. Read the terminal error. |
+| Repository or Project missing | Check account access, repository path, Project owner/number, and `read:project` scope. Hover the sidebar sync row and read repository warnings. |
+| Workflow or priority missing | Check the exact field/option names and the priority source. An issue must belong to the configured Project for Project fields to apply. |
+| OTRS or Zabbix says Account required | Open Settings → Accounts and verify an account for the configured server URL. |
+| Integration connection fails | Check the frontend URL/path, network or VPN, account permissions, and sidebar error details. Zabbix password API login cannot use MFA. |
+| A sync finished but the page looks unchanged | Click Show in Updates available. Regular syncs preserve your current view until then. |
+| Personal tickets missing | Add the person to `team`, check `otrs_user` against owner/responsible, and confirm the ticket queue and status are included. |
+
+To rebuild the local cache, stop the app, delete `instance/cockpit.sqlite`, and start again. This resets cached data and locally observed change history for all sources; it does not change upstream data or delete saved accounts. Browser visit and notification preferences are separate.
+
+DevCockpit has no user login and listens on localhost by default. Do not expose it without access control. `config.yml` and `instance/` are ignored by Git. Dates use Europe/Berlin. Run the checks with `.venv/bin/python -m pytest -q`.

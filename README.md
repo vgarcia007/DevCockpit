@@ -5,24 +5,39 @@ A local, read-only dashboard for a team's GitHub work. It brings Issues, Project
 ![Overview with example data](docs/screenshots/overview.png)
 *Overview with fictional demo data.*
 
+## What you can do
+
+- See priorities, review requests, failing checks, and current team work across repositories.
+- Open **My work** for your assignments, or switch to another configured team member.
+- Search and filter issues, PRs, and optional tickets; read release notes on a timeline.
+- Compare weekly issue, merge, release, and ticket activity in **Statistics**.
+- Follow observed changes through the notification bell and a checklist since your last visit.
+- Monitor optional Zabbix applications, including short incidents between syncs.
+
 ## What you need
 
-- Python 3.10+ and `venv` on Linux or WSL
-- [GitHub CLI (`gh`)](https://cli.github.com/) installed and signed in with an account that can read your repositories `sudo apt update && sudo apt install -y gh`
+- Python 3.10+ and `venv` on Linux
+- Git and [GitHub CLI (`gh`)](https://cli.github.com/), signed in with an account that can read your repositories
 - Read access to your GitHub Projects v2 if you want workflow status
 
 No GitHub token or `.env` file is needed. OTRS and Zabbix are optional.
 
-## Start on Linux or WSL
+## Start on Linux
+
+On Debian/Ubuntu, install the prerequisites with `sudo apt update && sudo apt install -y git python3 python3-venv gh`.
 
 ```bash
+git clone https://github.com/vgarcia007/DevCockpit.git
+cd DevCockpit
 gh auth login
 cp config.example.yml config.yml
 # Edit config.yml: set your GitHub login and replace /example-org/my-app.
 ./start.sh
 ```
 
-Open [http://127.0.0.1:7777](http://127.0.0.1:7777). The first sync runs in the background. `start.sh` creates a virtual environment and installs dependencies. Run it again after changing `config.yml`; it restarts this checkout's app.
+Open [http://127.0.0.1:7777](http://127.0.0.1:7777). The first sync runs in the background. `start.sh` creates a virtual environment and installs dependencies. Keep the terminal open; `Ctrl+C` stops the app. Run `./start.sh` again after changing `config.yml`; it restarts this checkout's app.
+
+If you enabled OTRS or Zabbix, open **Settings → Accounts** and enter each account. The app verifies and saves it encrypted for future starts. GitHub works while those accounts are still missing.
 
 ## Configure GitHub
 
@@ -32,10 +47,10 @@ In your private `config.yml`, set:
 | --- | --- |
 | `repositories[].url` | Each repository as `/owner/repo`. At least one is required. |
 | `repositories[].name` | A unique name shown in DevCockpit. |
-| `github.username` | Your GitHub login for the “My Issues” and “My Pull Requests” shortcuts. |
+| `github.username` | Your GitHub login for My work and personal filters. |
 | `repositories[].project_number` | The number at the end of a Projects v2 URL, or `null` if this repository has no Project. |
 
-If you use Projects, make the `workflow.values` match your Project's **exact** Status option names. Set `priority.source` to `project` for a Project field or `issue_field` for an organization Issue Field. Add people under `team` to show their work in Team and Brief. **My work** uses `github.username` and can switch to any configured team member. The supplied [`config.example.yml`](config.example.yml) contains these settings with one example repository.
+If you use Projects, make the `workflow.values` match your Project's **exact** Status option names. Set `priority.source` to `project` for a Project field or `issue_field` for an organization Issue Field, and set `priority.field` to its exact name. Open issues with **Urgent** or **High** appear in Need attention. Add people under `team` to show their work, including assigned issues in other accessible repositories. **My work** can switch to any configured team member. The supplied [`config.example.yml`](config.example.yml) contains these settings with one example repository.
 
 If a Project is unavailable, GitHub may need the `read:project` scope: `gh auth refresh -s read:project`. DevCockpit shows sync errors in the UI.
 
@@ -88,7 +103,9 @@ Back up both account files together. If the key is lost or storage is damaged, r
 
 ## Good to know
 
+- Statistics defaults to configured repositories with Projects. Switch to **All configured repositories** to include those without a Project. Optional OTRS queues contribute separate ticket counts. Counts use the latest synced creation, closure, merge, and release dates.
 - GitHub syncs every 5 minutes by default. The sidebar shows the status and next sync for every enabled source; OTRS and Zabbix sync independently. New sync results show an **Updates available** hint. Choose **Show** to refresh the view while keeping its filters and scroll position.
+- Need attention reflects the latest synced state: resolved conditions disappear after a successful sync and showing the updated view. Since your last visit is a separate history checklist; mark items done there without changing GitHub.
 - The notification bell reports observed GitHub changes and changes in configured OTRS attention queues. Browser alerts are optional and work while the tab is open.
 - DevCockpit has no user login and binds to localhost by default. Do not expose it without access control.
 - `config.yml` and `instance/` are ignored by Git. The SQLite database is a local cache.
