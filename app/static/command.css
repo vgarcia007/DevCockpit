@@ -461,6 +461,15 @@ body { font-size:14px; line-height:1.5; background:var(--color-bg); }
 .statistics-metrics strong { display:block; font-size:27px; line-height:1.1; }
 .statistics-metrics span { color:var(--color-muted); font-size:11px; }
 .statistics-note { margin:10px 0 0; color:var(--color-muted); font-size:11px; }
+.monitoring-sync { color:var(--color-muted); font-size:12px; margin-bottom:14px; }
+.monitoring-hosts { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; margin-bottom:18px; }
+.monitoring-host h2 { font-size:14px; margin:6px 0; overflow-wrap:anywhere; }
+.monitoring-host h2 .icon { width:12px; height:12px; }
+.monitoring-host p { color:var(--color-muted); font-size:12px; margin:7px 0 0; }
+.monitoring-environment { font-size:10px; font-weight:700; color:var(--color-muted); }
+.monitoring-severity { white-space:nowrap; font-weight:650; }
+.monitoring-severity.severity-2,.monitoring-severity.severity-3 { color:var(--color-warning); }
+.monitoring-severity.severity-4,.monitoring-severity.severity-5 { color:var(--color-danger); }
 .statistics-list { margin:0; padding:0; list-style:none; }
 .statistics-item { display:flex; align-items:center; gap:8px; min-width:0; padding:7px 0; border-top:1px solid var(--color-border); font-size:12px; }
 .statistics-item a { min-width:0; overflow-wrap:anywhere; font-weight:550; }

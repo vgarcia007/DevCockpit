@@ -45,3 +45,17 @@ sync:
 #   excluded_states: [closed]
 #   attention_queue_ids: [1]
 #   highlight_queue_ids: [1]
+
+# Optional Zabbix 7.4 monitoring. Use the full frontend installation path.
+# zabbix:
+#   enabled: true
+#   url: https://monitoring.example.com/zabbix/
+#   user: your-login
+#   password: your-password
+#   interval_seconds: 60
+#   attention_min_severity: 0 # 0: all; 1: Information; 2: Warning; 3: Average; 4: High; 5: Disaster.
+#   hosts:
+#     - host: app.example.com # Exact technical host name in Zabbix.
+#       environment: prod
+#     - host: staging.example.com
+#       environment: preprod

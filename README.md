@@ -1,6 +1,6 @@
 # DevCockpit
 
-A local, read-only dashboard for a team's GitHub work. It brings Issues, Projects v2 status, pull requests, reviews, CI checks, and releases into one place. An optional OTRS 5 integration shows tickets separately. GitHub and OTRS remain the sources of truth; DevCockpit does not edit them.
+A local, read-only dashboard for a team's GitHub work. It brings Issues, Projects v2 status, pull requests, reviews, CI checks, and releases into one place. Optional OTRS 5 and Zabbix 7.4 integrations show tickets and application monitoring. DevCockpit does not edit these systems.
 
 ![Overview with example data](docs/screenshots/overview.png)
 *Overview with fictional demo data.*
@@ -11,7 +11,7 @@ A local, read-only dashboard for a team's GitHub work. It brings Issues, Project
 - [GitHub CLI (`gh`)](https://cli.github.com/) installed and signed in with an account that can read your repositories `sudo apt update && sudo apt install -y gh`
 - Read access to your GitHub Projects v2 if you want workflow status
 
-No GitHub token or `.env` file is needed. OTRS is optional.
+No GitHub token or `.env` file is needed. OTRS and Zabbix are optional.
 
 ## Start on Linux or WSL
 
@@ -50,9 +50,34 @@ To include a person's tickets in **My work**, Overview, Now, Team, and Brief, ad
 ![Ticket table with example data](docs/screenshots/tickets.png)
 *Optional OTRS view with fictional demo data.*
 
+## Optional Zabbix monitoring
+
+Add `zabbix` to your private `config.yml` (an example is in `config.example.yml`):
+
+```yaml
+zabbix:
+  enabled: true
+  url: https://monitoring.example.com/zabbix/
+  user: your-login
+  password: your-password
+  interval_seconds: 60
+  attention_min_severity: 0
+  hosts:
+    - host: app.example.com
+      environment: prod
+    - host: staging.example.com
+      environment: preprod
+```
+
+Use the frontend URL including its installation path, and the exact technical host names from Zabbix. Your account needs API access to `host.get`, `trigger.get`, and `problem.get`. Password login requires an account without Zabbix MFA. Sessions are logged out after each sync.
+
+**Monitoring → Applications** shows hosts and all open problems, including acknowledged and suppressed problems. Filter by application, environment or severity, or search the problem list. **Need attention** includes problems from both environments at or above `attention_min_severity`: `0` Not classified, `1` Information, `2` Warning, `3` Average, `4` High, `5` Disaster. The default `0` includes everything.
+
+Zabbix syncs independently every 60 seconds. Failed syncs keep the last successful data and display an error. Set `zabbix.enabled: false` or remove the section to disable it. Restart with `./start.sh` after config changes. Keep credentials in the private config; they are never sent to the browser.
+
 ## Good to know
 
-- GitHub syncs every 5 minutes by default. **Sync now** refreshes GitHub; OTRS syncs independently.
+- GitHub syncs every 5 minutes by default. **Sync now** refreshes GitHub; OTRS and Zabbix sync independently.
 - The notification bell reports observed GitHub changes and changes in configured OTRS attention queues. Browser alerts are optional and work while the tab is open.
 - DevCockpit has no user login and binds to localhost by default. Do not expose it without access control.
 - `config.yml` and `instance/` are ignored by Git. The SQLite database is a local cache.

@@ -196,6 +196,36 @@ class OTRSObservedChange(Base):
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 
+class ZabbixHost(Base):
+    __tablename__ = "zabbix_hosts"
+    hostid: Mapped[str] = mapped_column(String, primary_key=True)
+    host: Mapped[str] = mapped_column(String, unique=True)
+    name: Mapped[str] = mapped_column(String)
+    environment: Mapped[str] = mapped_column(String)
+    enabled: Mapped[bool] = mapped_column(Boolean)
+    trigger_count: Mapped[int] = mapped_column(Integer)
+
+
+class ZabbixProblem(Base):
+    __tablename__ = "zabbix_problems"
+    eventid: Mapped[str] = mapped_column(String, primary_key=True)
+    triggerid: Mapped[str] = mapped_column(String)
+    name: Mapped[str] = mapped_column(Text)
+    severity: Mapped[int] = mapped_column(Integer)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    hostids: Mapped[list] = mapped_column(JSON)
+    acknowledged: Mapped[bool] = mapped_column(Boolean)
+    suppressed: Mapped[bool] = mapped_column(Boolean)
+
+
+class ZabbixSyncState(Base):
+    __tablename__ = "zabbix_sync_state"
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    last_attempt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_success: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
+
+
 def make_session(database_path):
     engine = create_engine(f"sqlite:///{database_path}", connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)

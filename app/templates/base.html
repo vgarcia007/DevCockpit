@@ -30,8 +30,10 @@
       {% endfor %}
       {% if otrs_enabled %}<div class="nav-caption nav-caption-secondary">Tickets</div>
       <a class="sidebar-link{% if active_endpoint == 'tickets_page' %} is-active{% endif %}" href="{{ url_for('tickets_page') }}"{% if active_endpoint == 'tickets_page' %} aria-current="page"{% endif %}>{{ icon('clipboard-list') }}<span>Alle</span></a>{% endif %}
+      {% if zabbix_enabled %}<div class="nav-caption nav-caption-secondary">Monitoring</div>
+      <a class="sidebar-link{% if active_endpoint == 'monitoring_page' %} is-active{% endif %}" href="{{ url_for('monitoring_page') }}"{% if active_endpoint == 'monitoring_page' %} aria-current="page"{% endif %}>{{ icon('activity') }}<span>Applications</span></a>{% endif %}
     </nav>
-    <div class="sidebar-foot"><div class="source-status"><span class="source-dot"></span><span>GitHub · read-only</span></div><span id="sync-label" class="sync-label" title="Last GitHub sync with at least one successful repository" data-last-success="{{ last_sync.isoformat() if last_sync else '' }}" data-otrs-last-success="{{ otrs_last_success.isoformat() if otrs_last_success else '' }}">{% if last_sync %}Last sync {{ last_sync|datetime }}{% else %}Waiting for first sync{% endif %}</span><span id="sync-countdown" class="sync-countdown">Checking next sync…</span></div>
+    <div class="sidebar-foot"><div class="source-status"><span class="source-dot"></span><span>GitHub · read-only</span></div><span id="sync-label" class="sync-label" title="Last GitHub sync with at least one successful repository" data-last-success="{{ last_sync.isoformat() if last_sync else '' }}" data-otrs-last-success="{{ otrs_last_success.isoformat() if otrs_last_success else '' }}" data-zabbix-revision="{{ zabbix_revision }}">{% if last_sync %}Last sync {{ last_sync|datetime }}{% else %}Waiting for first sync{% endif %}</span><span id="sync-countdown" class="sync-countdown">Checking next sync…</span></div>
   </aside>
   <div class="sidebar-backdrop" id="sidebar-backdrop" hidden></div>
   <div class="app-workspace">
@@ -50,6 +52,7 @@
     <main class="app-main">
       {% if not last_sync %}<div class="app-notice">{% if sync_running %}The first GitHub sync is running. Data will appear here when it finishes.{% elif repositories|selectattr('error')|list %}GitHub sync could not complete. See repository warnings below.{% else %}The first GitHub sync is pending.{% endif %}</div>{% endif %}
       {% for warning in sync_warnings %}<div class="app-notice is-warning"><strong>{{ warning.repositories|join(', ') }}:</strong> {{ warning.error }}</div>{% endfor %}
+      {% if zabbix_enabled and request.endpoint in ['home', 'monitoring_page'] and zabbix_state and zabbix_state.error %}<div class="app-notice is-warning"><strong>Zabbix sync failed:</strong> {{ zabbix_state.error }} · {% if zabbix_state.last_success %}Showing data from {{ zabbix_state.last_success|datetime }}{% else %}No successful sync yet{% endif %}</div>{% endif %}
       {% block content %}{% endblock %}
     </main>
   </div>

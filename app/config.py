@@ -74,6 +74,37 @@ def load_config(path=None):
             if not isinstance(otrs["excluded_states"], list) or any(not isinstance(s, str) for s in otrs["excluded_states"]):
                 raise ValueError("otrs.excluded_states must be a list of statuses")
         data["otrs"] = otrs
+    if data.get("zabbix") is not None:
+        zabbix = data["zabbix"]
+        if not isinstance(zabbix, dict):
+            raise ValueError("zabbix must be a mapping")
+        zabbix.setdefault("enabled", True)
+        if not isinstance(zabbix["enabled"], bool):
+            raise ValueError("zabbix.enabled must be true or false")
+        if zabbix["enabled"]:
+            if not zabbix.get("user") or not zabbix.get("password"):
+                raise ValueError("zabbix needs user and password when enabled")
+            if not str(zabbix.get("url", "")).startswith("https://"):
+                raise ValueError("zabbix.url must use HTTPS")
+            zabbix.setdefault("interval_seconds", 60)
+            zabbix.setdefault("attention_min_severity", 0)
+            for key, minimum, maximum in (("interval_seconds", 60, None), ("attention_min_severity", 0, 5)):
+                value = zabbix[key]
+                if not isinstance(value, int) or isinstance(value, bool) or value < minimum or (maximum is not None and value > maximum):
+                    raise ValueError(f"Invalid zabbix.{key}")
+            hosts = zabbix.get("hosts")
+            if not isinstance(hosts, list) or not hosts:
+                raise ValueError("zabbix.hosts must be a non-empty list")
+            host_names = set()
+            for host in hosts:
+                if not isinstance(host, dict) or not isinstance(host.get("host"), str) or not host["host"].strip():
+                    raise ValueError("Each zabbix host needs a technical host name")
+                host["host"] = host["host"].strip()
+                if host.get("environment") not in ("prod", "preprod"):
+                    raise ValueError("zabbix host environment must be prod or preprod")
+                if host["host"] in host_names:
+                    raise ValueError("Duplicate zabbix host")
+                host_names.add(host["host"])
     unique = {}
     otrs_owners = set()
     for person in data.get("team", []):

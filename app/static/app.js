@@ -11,6 +11,7 @@ const syncCountdown = document.getElementById('sync-countdown');
 if (syncCountdown) {
   const renderedGitHubSync = syncLabel?.dataset.lastSuccess || '';
   const renderedOtrsSync = syncLabel?.dataset.otrsLastSuccess || '';
+  const renderedZabbixRevision = syncLabel?.dataset.zabbixRevision || '';
   let syncWasRunning = false;
   let nextSyncAt = null;
   let cooldownUntil = null;
@@ -44,6 +45,7 @@ if (syncCountdown) {
       else if (data.last_success) syncLabel.textContent = 'Last sync ' + new Date(data.last_success).toLocaleString('de-DE');
       if ((data.last_success || '') !== renderedGitHubSync ||
           (data.otrs_last_success || '') !== renderedOtrsSync ||
+          (data.zabbix_revision || '') !== renderedZabbixRevision ||
           (syncWasRunning && !data.running)) {
         window.location.reload();
         return;

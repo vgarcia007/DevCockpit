@@ -12,6 +12,8 @@ from .config import ROOT, load_config
 from .models import ExternalTeamIssue, ExternalTeamSync, Issue, ObservedChange, OTRSObservedChange, OTRSSyncState, OTRSTicket, OTRSTicketStat, Pull, Release, Repository, SyncMeta, UserAvatar, make_session
 from .otrs import OTRSSyncManager
 from .sync import SyncManager
+from .models import ZabbixHost, ZabbixProblem, ZabbixSyncState
+from .zabbix import SEVERITIES, ZabbixSyncManager, host_url, problem_duration, problem_url
 
 LOG = logging.getLogger(__name__)
 PRIORITIES = ["Urgent", "High", "Medium", "Low"]
@@ -240,6 +242,8 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
     sessions = make_session(database_path or instance / "cockpit.sqlite")
     otrs_config = cfg.get("otrs")
     otrs_enabled = bool(otrs_config and otrs_config.get("enabled"))
+    zabbix_config = cfg.get("zabbix")
+    zabbix_enabled = bool(zabbix_config and zabbix_config.get("enabled"))
     configured = {repo["name"] for repo in cfg["repositories"]}
     configured_repositories = {repo["name"]: repo for repo in cfg["repositories"]}
     with sessions() as session:
@@ -260,16 +264,19 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
     manager = SyncManager(sessions, cfg)
     otrs_manager = OTRSSyncManager(sessions, otrs_config,
                                    include_responsible=any(person.get("otrs_user") for person in cfg["team"])) if otrs_enabled else None
+    zabbix_manager = ZabbixSyncManager(sessions, zabbix_config) if zabbix_enabled else None
     app = Flask(__name__)
     app.config["COCKPIT_CONFIG"] = cfg
     app.config["SYNC_MANAGER"] = manager
     app.config["OTRS_SYNC_MANAGER"] = otrs_manager
+    app.config["ZABBIX_SYNC_MANAGER"] = zabbix_manager
     app.jinja_env.filters["date"] = fmt_date
     app.jinja_env.filters["datetime"] = fmt_time
     app.jinja_env.filters["age"] = age_days
     app.jinja_env.filters["open_days"] = open_days
     app.jinja_env.filters["priority"] = priority_label
     app.jinja_env.filters["workflow"] = workflow_label
+    app.jinja_env.filters["monitoring_duration"] = problem_duration
 
     def snapshot():
         with sessions() as session:
@@ -299,8 +306,11 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
         with sessions() as session:
             avatars = {user.login: user.url for user in session.scalars(select(UserAvatar)).all()}
             otrs_state = session.get(OTRSSyncState, "tickets") if otrs_manager else None
+            zabbix_state = session.get(ZabbixSyncState, "monitoring") if zabbix_manager else None
         return {"repositories": repos, "last_sync": datetime.fromisoformat(meta.value) if meta else None,
                 "otrs_last_success": otrs_state.last_success if otrs_state else None,
+                "zabbix_enabled": zabbix_enabled, "zabbix_state": zabbix_state,
+                "zabbix_revision": zabbix_state.last_attempt.isoformat() if zabbix_state and zabbix_state.last_attempt else "",
                 "sync_running": manager.running, "github_user": cfg.get("github", {}).get("username", ""),
                 "otrs_enabled": otrs_manager is not None,
                 "avatars": avatars,
@@ -340,6 +350,27 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
                 OTRSTicket.queue_id.in_(otrs_config["attention_queue_ids"]),
                 ~func.lower(func.trim(OTRSTicket.state)).in_(excluded_states),
             ).order_by(OTRSTicket.created_at.desc(), OTRSTicket.number.desc())).all()
+
+    def monitoring_data():
+        if not zabbix_manager:
+            return [], []
+        selection = {item["host"]: item for item in zabbix_config["hosts"]}
+        with sessions() as session:
+            hosts = session.scalars(select(ZabbixHost).where(ZabbixHost.host.in_(selection))).all()
+            problems = session.scalars(select(ZabbixProblem).order_by(
+                ZabbixProblem.severity.desc(), ZabbixProblem.started_at.desc())).all()
+        by_id = {host.hostid: host for host in hosts}
+        for host in hosts:
+            host.environment = selection[host.host]["environment"]
+            host.url = host_url(zabbix_config, host)
+        visible = []
+        for problem in problems:
+            problem.hosts = [by_id[hostid] for hostid in problem.hostids if hostid in by_id]
+            if problem.hosts:
+                problem.url = problem_url(zabbix_config, problem)
+                problem.severity_label = SEVERITIES[problem.severity]
+                visible.append(problem)
+        return sorted(hosts, key=lambda host: (host.environment, host.name.casefold())), visible
 
     def attention(issues, pulls):
         result = []
@@ -409,10 +440,14 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
             changes = [{"event": event, "observed_ms": int(event.observed_at.replace(tzinfo=timezone.utc).timestamp() * 1000)}
                        for event in observed]
         attention_tickets = otrs_attention_tickets()
+        _, zabbix_problems = monitoring_data()
+        monitoring_attention = [problem for problem in zabbix_problems
+                                if problem.severity >= zabbix_config["attention_min_severity"]] if zabbix_manager else []
         github_attention = lead_attention(open_issues, open_pulls)
         return render_template("home.html", **common(repos, meta), attention=github_attention,
             attention_tickets=attention_tickets,
-            attention_count=len(github_attention) + len(attention_tickets),
+            monitoring_attention=monitoring_attention,
+            attention_count=len(github_attention) + len(attention_tickets) + len(monitoring_attention),
             otrs_url=cfg["otrs"]["url"].rstrip("/") + "/index.pl" if otrs_manager else None,
             observed_changes=changes,
             team=team_data(open_issues, open_pulls), ready=ready, ready_counts=counts,
@@ -654,6 +689,36 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
             ticket_closed=ticket_closed, otrs_sync=otrs_sync, undated_closed=undated_closed,
             otrs_url=otrs_config["url"].rstrip("/") + "/index.pl" if otrs_manager else None)
 
+    @app.get("/monitoring")
+    def monitoring_page():
+        if not zabbix_manager:
+            abort(404)
+        hosts, problems = monitoring_data()
+        filters = {key: request.args.get(key, "").strip() for key in ("host", "environment", "severity", "q")}
+        visible = problems
+        if filters["host"] or filters["environment"]:
+            visible = [problem for problem in visible if any(
+                (not filters["host"] or host.host == filters["host"]) and
+                (not filters["environment"] or host.environment == filters["environment"])
+                for host in problem.hosts)]
+        if filters["severity"]:
+            if filters["severity"] not in {str(value) for value in range(len(SEVERITIES))}:
+                abort(400)
+            visible = [problem for problem in visible if problem.severity == int(filters["severity"])]
+        if filters["q"]:
+            query = filters["q"].casefold()
+            visible = [problem for problem in visible if query in " ".join(
+                [problem.name, problem.severity_label, *[host.name for host in problem.hosts],
+                 *[host.host for host in problem.hosts]]).casefold()]
+        cached = {host.host: host for host in hosts}
+        cards = [{"config": config, "host": cached.get(config["host"]),
+                  "problem_count": sum(any(host.host == config["host"] for host in problem.hosts) for problem in problems)}
+                 for config in zabbix_config["hosts"]]
+        repos, _, _, _, meta = snapshot()
+        return render_template("monitoring.html", **common(repos, meta), problems=visible,
+                               host_cards=cards, filters=filters, severities=SEVERITIES,
+                               zabbix_running=zabbix_manager.running)
+
     @app.get("/board")
     def board():
         filters = {}
@@ -733,11 +798,14 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
         with sessions() as session:
             meta = session.get(SyncMeta, "last_success")
             otrs_state = session.get(OTRSSyncState, "tickets") if otrs_manager else None
+            zabbix_state = session.get(ZabbixSyncState, "monitoring") if zabbix_manager else None
             errors = [{"repository": r.name, "error": r.error} for r in session.scalars(select(Repository)).all() if r.error]
         return jsonify({**manager.status(), "otrs_running": otrs_manager.running if otrs_manager else False,
                         "server_time": datetime.now(timezone.utc).isoformat(),
                         "last_success": meta.value if meta else None,
                         "otrs_last_success": otrs_state.last_success.isoformat() if otrs_state and otrs_state.last_success else None,
+                        "zabbix_revision": zabbix_state.last_attempt.isoformat() if zabbix_state and zabbix_state.last_attempt else "",
+                        "zabbix_running": zabbix_manager.running if zabbix_manager else False,
                         "errors": errors})
 
     @app.get("/notifications")
@@ -819,4 +887,6 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
         manager.enable_scheduler()
         if otrs_manager:
             otrs_manager.enable_scheduler()
+        if zabbix_manager:
+            zabbix_manager.enable_scheduler()
     return app
