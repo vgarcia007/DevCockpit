@@ -107,10 +107,18 @@ body { font-size:14px; line-height:1.5; background:var(--color-bg); }
 .sidebar-link.is-active::before { content:""; position:absolute; left:0; top:9px; bottom:9px; width:3px; border-radius:0 2px 2px 0; background:#9ed2bd; }
 .sidebar-link.is-active .icon { color:#b8e1cf; }
 .sidebar-foot { padding:18px 22px 24px; border-top:1px solid var(--rail-border); background:rgba(0,0,0,.045); }
-.source-status { color:var(--rail-text); font-size:11px; }
-.source-dot { width:7px; height:7px; background:#86c69e; box-shadow:0 0 0 3px rgba(134,198,158,.12); }
-.sidebar-foot .sync-label { color:var(--rail-muted); font-size:11px; }
-.sidebar-foot .sync-countdown { display:block; margin:6px 0 0 13px; color:var(--rail-text); font-size:11px; font-variant-numeric:tabular-nums; }
+.sync-heading { margin-bottom:8px; color:var(--rail-muted); font-size:9px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; }
+.sync-sources { display:grid; gap:3px; }
+.sync-source { position:relative; display:grid; grid-template-columns:7px 1fr auto; align-items:center; gap:8px; min-height:26px; color:var(--rail-text); font-size:11px; border-radius:4px; }
+.sync-source:focus-visible { outline:2px solid #9ed2bd; outline-offset:3px; }
+.sync-source-dot { width:6px; height:6px; border-radius:50%; background:var(--rail-muted); }
+.sync-source.is-healthy .sync-source-dot { background:#86c69e; }
+.sync-source.is-running .sync-source-dot { background:#8ebfe8; }
+.sync-source.is-error .sync-source-dot, .sync-source.is-paused .sync-source-dot { background:#efba77; }
+.sync-source-value { color:var(--rail-muted); font-variant-numeric:tabular-nums; white-space:nowrap; }
+.sync-source.is-error .sync-source-value, .sync-source.is-paused .sync-source-value { color:#efba77; }
+.sync-details { position:absolute; bottom:calc(100% + 5px); left:0; right:0; z-index:100; padding:10px 12px; border:1px solid var(--rail-border); border-radius:6px; background:var(--rail-bg); color:var(--rail-text); box-shadow:0 4px 16px rgba(0,0,0,.25); white-space:pre-line; overflow-wrap:anywhere; max-height:60vh; overflow-y:auto; line-height:1.5; visibility:hidden; opacity:0; pointer-events:none; }
+.sync-source:not([data-tooltip-dismissed]):hover .sync-details, .sync-source:not([data-tooltip-dismissed]):focus .sync-details { visibility:visible; opacity:1; pointer-events:auto; }
 .app-workspace { background:var(--color-bg); }
 .workbar {
   height:65px;

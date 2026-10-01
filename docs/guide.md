@@ -31,7 +31,7 @@ Add people under `team` to show their work in Team and Brief. Use their exact Gi
 
 DevCockpit uses your local `gh` login to read repositories, issues, pull requests, checks, releases, and configured Projects. It uses `gh api` and `gh api graphql`; there is no separate GitHub token in `config.yml`. A missing Project scope may require `gh auth refresh -s read:project`. Repository-specific sync errors appear in the UI.
 
-GitHub sync runs every `sync.interval_seconds` after the previous sync completes (default: 300 seconds; minimum: 10). **Sync now** requests an immediate refresh. Conditional REST requests reuse cached responses when GitHub reports no change. When GitHub reports a rate limit, DevCockpit waits until the retry time and shows that in the sidebar. Configuration changes require a restart.
+GitHub sync runs every `sync.interval_seconds` after the previous sync completes (default: 300 seconds; minimum: 10). The sidebar shows one status row per enabled source, with its next automatic sync. Hover or focus a row for the last successful sync and error details. Conditional REST requests reuse cached responses when GitHub reports no change. When GitHub reports a rate limit, DevCockpit waits until the retry time and shows that in the sidebar. Configuration changes require a restart.
 
 To rebuild the local GitHub cache, stop the app, delete `instance/cockpit.sqlite`, and start it again. This also clears locally observed change history. It does not change GitHub data.
 

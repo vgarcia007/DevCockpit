@@ -267,6 +267,7 @@ class OTRSSyncManager:
         self.timer = None
         self.scheduler_enabled = False
         self.running = False
+        self.next_sync_at = None
 
     def enable_scheduler(self):
         self.scheduler_enabled = True
@@ -277,6 +278,7 @@ class OTRSSyncManager:
             return False
         if self.timer:
             self.timer.cancel()
+        self.next_sync_at = None
         self.running = True
         threading.Thread(target=self._run, daemon=True, name="otrs-sync").start()
         return True
@@ -284,6 +286,9 @@ class OTRSSyncManager:
     def run_sync(self):
         if not self.lock.acquire(blocking=False):
             return False
+        if self.timer:
+            self.timer.cancel()
+        self.next_sync_at = None
         self.running = True
         self._run()
         return True
@@ -327,6 +332,7 @@ class OTRSSyncManager:
             self.running = False
             self.lock.release()
             if self.scheduler_enabled:
-                self.timer = threading.Timer(int(self.config["interval_seconds"]), self.start)
+                self.next_sync_at = datetime.now(timezone.utc) + timedelta(seconds=int(self.config["interval_seconds"]))
+                self.timer = threading.Timer(max(0, (self.next_sync_at - datetime.now(timezone.utc)).total_seconds()), self.start)
                 self.timer.daemon = True
                 self.timer.start()

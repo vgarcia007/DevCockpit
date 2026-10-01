@@ -3,6 +3,7 @@ import re
 import unicodedata
 from calendar import month_abbr, monthrange
 from datetime import datetime, timedelta, timezone
+from math import ceil
 from pathlib import Path
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
@@ -298,6 +299,42 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
         repo = request.args.get("repo", "")
         return [i for i in items if not repo or i.repository_name == repo]
 
+    def sync_sources(meta, otrs_state, zabbix_state, errors):
+        def timestamp(value):
+            if isinstance(value, datetime):
+                return value.replace(tzinfo=timezone.utc).isoformat()
+            return value
+
+        github = manager.status()
+        sources = [{"id": "github", "name": "GitHub", **github,
+                    "last_success": meta.value if meta else None,
+                    "error": "\n".join(f'{item["repository"]}: {item["error"]}' for item in errors) or None}]
+        for key, name, sync_manager, state in (("otrs", "OTRS", otrs_manager, otrs_state),
+                                             ("zabbix", "Zabbix", zabbix_manager, zabbix_state)):
+            if sync_manager:
+                sources.append({"id": key, "name": name, "running": sync_manager.running,
+                    "last_success": timestamp(state.last_success) if state else None,
+                    "next_sync_at": timestamp(sync_manager.next_sync_at) if not sync_manager.running else None,
+                    "error": state.error if state else None, "rate_limit_until": None})
+        for source in sources:
+            source["state"] = ("running" if source["running"] else "paused" if source["rate_limit_until"]
+                               else "error" if source["error"] else "healthy" if source["last_success"] else "pending")
+            source["display"] = {"running": "Syncing…", "paused": "Paused", "error": "Error"}.get(source["state"], "Waiting")
+            if source["state"] in ("healthy", "pending") and source["next_sync_at"]:
+                seconds = max(0, ceil((datetime.fromisoformat(source["next_sync_at"]) - datetime.now(timezone.utc)).total_seconds()))
+                hours, remainder = divmod(seconds, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                source["display"] = (f"{hours}:" if hours else "") + f"{minutes:02d}:{seconds:02d}"
+            details = [source["name"] + " · " + {"running": "Sync running", "paused": "GitHub rate limit · sync paused",
+                "error": "Last sync failed", "healthy": "Last sync successful", "pending": "Waiting for first sync"}[source["state"]]]
+            details.append("Last successful sync: " + (fmt_time(datetime.fromisoformat(source["last_success"])) if source["last_success"] else "None yet"))
+            if source["next_sync_at"]:
+                details.append("Next sync: " + fmt_time(datetime.fromisoformat(source["next_sync_at"])))
+            if source["error"]:
+                details.append("Last sync error: " + source["error"])
+            source["details"] = "\n".join(details)
+        return sources
+
     def common(repos, meta):
         warnings = {}
         for repo in repos:
@@ -308,6 +345,9 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
             otrs_state = session.get(OTRSSyncState, "tickets") if otrs_manager else None
             zabbix_state = session.get(ZabbixSyncState, "monitoring") if zabbix_manager else None
         return {"repositories": repos, "last_sync": datetime.fromisoformat(meta.value) if meta else None,
+                "sync_sources": sync_sources(meta, otrs_state, zabbix_state,
+                    [{"repository": repo.name, "error": repo.error} for repo in repos if repo.error]),
+                "sync_server_time": datetime.now(timezone.utc).isoformat(),
                 "otrs_last_success": otrs_state.last_success if otrs_state else None,
                 "zabbix_enabled": zabbix_enabled, "zabbix_state": zabbix_state,
                 "zabbix_revision": zabbix_state.last_attempt.isoformat() if zabbix_state and zabbix_state.last_attempt else "",
@@ -808,6 +848,7 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
             zabbix_state = session.get(ZabbixSyncState, "monitoring") if zabbix_manager else None
             errors = [{"repository": r.name, "error": r.error} for r in session.scalars(select(Repository)).all() if r.error]
         return jsonify({**manager.status(), "otrs_running": otrs_manager.running if otrs_manager else False,
+                        "sources": sync_sources(meta, otrs_state, zabbix_state, errors),
                         "server_time": datetime.now(timezone.utc).isoformat(),
                         "last_success": meta.value if meta else None,
                         "otrs_last_success": otrs_state.last_success.isoformat() if otrs_state and otrs_state.last_success else None,

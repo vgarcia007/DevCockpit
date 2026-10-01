@@ -33,11 +33,20 @@
       {% if zabbix_enabled %}<div class="nav-caption nav-caption-secondary">Monitoring</div>
       <a class="sidebar-link{% if active_endpoint == 'monitoring_page' %} is-active{% endif %}" href="{{ url_for('monitoring_page') }}"{% if active_endpoint == 'monitoring_page' %} aria-current="page"{% endif %}>{{ icon('activity') }}<span>Applications</span></a>{% endif %}
     </nav>
-    <div class="sidebar-foot"><div class="source-status"><span class="source-dot"></span><span>GitHub · read-only</span></div><span id="sync-label" class="sync-label" title="Last GitHub sync with at least one successful repository" data-last-success="{{ last_sync.isoformat() if last_sync else '' }}" data-otrs-last-success="{{ otrs_last_success.isoformat() if otrs_last_success else '' }}" data-zabbix-revision="{{ zabbix_revision }}">{% if last_sync %}Last sync {{ last_sync|datetime }}{% else %}Waiting for first sync{% endif %}</span><span id="sync-countdown" class="sync-countdown">Checking next sync…</span></div>
+    <div class="sidebar-foot" id="sync-label" data-server-time="{{ sync_server_time }}" data-last-success="{{ last_sync.isoformat() if last_sync else '' }}" data-otrs-last-success="{{ otrs_last_success.isoformat() if otrs_last_success else '' }}" data-zabbix-revision="{{ zabbix_revision }}">
+      <div class="sync-heading">Synchronization</div>
+      <div class="sync-sources" aria-label="Synchronization status">
+        {% for source in sync_sources %}<div class="sync-source is-{{ source.state }}" data-sync-source="{{ source.id }}" tabindex="0" role="group" aria-label="{{ source.name }} synchronization" aria-describedby="sync-details-{{ source.id }}">
+          <span class="sync-source-dot" aria-hidden="true"></span><span class="sync-source-name">{{ source.name }}</span><span class="sync-source-value"{% if source.id == 'github' %} id="sync-countdown"{% endif %}>{{ source.display }}</span>
+          <span class="sync-details" id="sync-details-{{ source.id }}" role="tooltip">{{ source.details }}</span>
+        </div>{% endfor %}
+      </div>
+      <script type="application/json" id="sync-sources-data">{{ sync_sources|tojson }}</script>
+    </div>
   </aside>
   <div class="sidebar-backdrop" id="sidebar-backdrop" hidden></div>
   <div class="app-workspace">
-    <header class="workbar"><button class="icon-button sidebar-toggle" id="sidebar-toggle" type="button" aria-label="Open navigation" aria-expanded="false">{{ icon('menu') }}</button><div class="workbar-context"><span>Workspace</span>{{ icon('chevron-right') }}<strong>{% block workbar_title %}Briefing{% endblock %}</strong></div><div class="workbar-controls">{% if request.endpoint != 'brief' %}<form class="header-search" action="{{ url_for('search') }}">{{ icon('search') }}<input name="q" placeholder="Search issues and PRs" aria-label="Search issues and pull requests"></form><button class="sync-button" id="sync-button" type="button">{{ icon('refresh-cw') }}<span>Sync now</span></button>{% endif %}
+    <header class="workbar"><button class="icon-button sidebar-toggle" id="sidebar-toggle" type="button" aria-label="Open navigation" aria-expanded="false">{{ icon('menu') }}</button><div class="workbar-context"><span>Workspace</span>{{ icon('chevron-right') }}<strong>{% block workbar_title %}Briefing{% endblock %}</strong></div><div class="workbar-controls">{% if request.endpoint != 'brief' %}<form class="header-search" action="{{ url_for('search') }}">{{ icon('search') }}<input name="q" placeholder="Search issues and PRs" aria-label="Search issues and pull requests"></form>{% endif %}
       <div class="notification-control">
         <button class="icon-button notification-trigger" id="notification-trigger" type="button" aria-label="Notifications" aria-controls="notification-panel" aria-expanded="false" title="Notifications">{{ icon('bell') }}<span class="notification-count" id="notification-count" hidden></span></button>
         <section class="notification-panel" id="notification-panel" aria-label="Notifications" hidden>

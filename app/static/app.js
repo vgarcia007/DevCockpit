@@ -5,18 +5,16 @@ document.querySelectorAll('a[href]').forEach(link => {
   }
 });
 
-const syncButton = document.getElementById('sync-button');
 const syncLabel = document.getElementById('sync-label');
-const syncCountdown = document.getElementById('sync-countdown');
-if (syncCountdown) {
-  const renderedGitHubSync = syncLabel?.dataset.lastSuccess || '';
-  const renderedOtrsSync = syncLabel?.dataset.otrsLastSuccess || '';
-  const renderedZabbixRevision = syncLabel?.dataset.zabbixRevision || '';
+if (syncLabel) {
+  const renderedGitHubSync = syncLabel.dataset.lastSuccess || '';
+  const renderedOtrsSync = syncLabel.dataset.otrsLastSuccess || '';
+  const renderedZabbixRevision = syncLabel.dataset.zabbixRevision || '';
+  let sources = JSON.parse(document.getElementById('sync-sources-data').textContent);
+  const rows = new Map([...document.querySelectorAll('[data-sync-source]')].map(row => [row.dataset.syncSource, row]));
   let syncWasRunning = false;
-  let nextSyncAt = null;
-  let cooldownUntil = null;
-  let syncRunning = false;
-  let serverOffsetMs = 0;
+  let unavailable = false;
+  let serverOffsetMs = Date.parse(syncLabel.dataset.serverTime) - Date.now();
   const remaining = target => Math.max(0, Math.ceil((Date.parse(target) - Date.now() - serverOffsetMs) / 1000));
   const duration = seconds => {
     const hours = Math.floor(seconds / 3600);
@@ -25,12 +23,19 @@ if (syncCountdown) {
     return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}` :
       `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`;
   };
-  const renderCountdown = () => {
-    if (syncRunning) syncCountdown.textContent = 'Sync running…';
-    else if (nextSyncAt) syncCountdown.textContent =
-      `${cooldownUntil && remaining(cooldownUntil) ? 'GitHub limit · retry' : 'Next sync'} in ${duration(remaining(nextSyncAt))}`;
-    else syncCountdown.textContent = 'Checking next sync…';
-    syncButton && (syncButton.disabled = syncRunning || Boolean(cooldownUntil && remaining(cooldownUntil)));
+  const renderSources = () => {
+    for (const source of sources) {
+      const row = rows.get(source.id);
+      if (!row) continue;
+      const state = unavailable ? 'unavailable' : source.state;
+      row.className = `sync-source is-${state}`;
+      const labels = {running: 'Syncing…', paused: 'Paused', error: 'Error', unavailable: 'Unavailable'};
+      row.querySelector('.sync-source-value').textContent = labels[state] ||
+        (source.next_sync_at ? duration(remaining(source.next_sync_at)) : 'Waiting');
+      row.querySelector('.sync-details').textContent = unavailable ?
+        'Sync status unavailable. Showing last known details.\n' + source.details : source.details;
+    }
+
   };
   const refreshSyncStatus = async () => {
     try {
@@ -38,11 +43,8 @@ if (syncCountdown) {
       if (!response.ok) throw new Error('Sync status unavailable');
       const data = await response.json();
       serverOffsetMs = Date.parse(data.server_time) - Date.now();
-      nextSyncAt = data.next_sync_at;
-      cooldownUntil = data.rate_limit_until;
-      syncRunning = data.running;
-      if (data.running) syncLabel.textContent = 'Sync running…';
-      else if (data.last_success) syncLabel.textContent = 'Last sync ' + new Date(data.last_success).toLocaleString('de-DE');
+      sources = data.sources;
+      unavailable = false;
       if ((data.last_success || '') !== renderedGitHubSync ||
           (data.otrs_last_success || '') !== renderedOtrsSync ||
           (data.zabbix_revision || '') !== renderedZabbixRevision ||
@@ -51,31 +53,20 @@ if (syncCountdown) {
         return;
       }
       syncWasRunning = data.running;
-      renderCountdown();
-    } catch (_) { syncCountdown.textContent = 'Sync status unavailable'; }
+    } catch (_) { unavailable = true; }
+    renderSources();
   };
-  if (syncButton) {
-  syncButton.addEventListener('click', async () => {
-    syncButton.disabled = true;
-    try {
-      const response = await fetch('/sync', {method: 'POST'});
-      const data = await response.json();
-      syncLabel.textContent = data.started ? 'Sync running…' : data.reason === 'rate_limit' ?
-        'GitHub limit · sync paused' : 'Sync already running…';
-      syncRunning = data.running;
-      syncWasRunning = data.running;
-      nextSyncAt = data.next_sync_at;
-      cooldownUntil = data.rate_limit_until;
-      renderCountdown();
-    } catch (_) {
-      syncLabel.textContent = 'Sync request failed';
-    } finally {
-      setTimeout(renderCountdown, 2500);
+  for (const row of rows.values()) {
+    row.addEventListener('keydown', event => {
+      if (event.key === 'Escape') row.dataset.tooltipDismissed = 'true';
+    });
+    for (const event of ['mouseenter', 'focus', 'blur', 'mouseleave']) {
+      row.addEventListener(event, () => delete row.dataset.tooltipDismissed);
     }
-  });
   }
+  renderSources();
   setInterval(refreshSyncStatus, 10000);
-  setInterval(renderCountdown, 1000);
+  setInterval(renderSources, 1000);
   refreshSyncStatus();
 }
 

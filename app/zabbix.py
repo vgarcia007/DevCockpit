@@ -145,6 +145,7 @@ class ZabbixSyncManager:
         self.running = False
         self.scheduler_enabled = False
         self.timer = None
+        self.next_sync_at = None
 
     def enable_scheduler(self):
         self.scheduler_enabled = True
@@ -155,6 +156,7 @@ class ZabbixSyncManager:
             return False
         if self.timer:
             self.timer.cancel()
+        self.next_sync_at = None
         self.running = True
         threading.Thread(target=self._run, daemon=True, name="zabbix-sync").start()
         return True
@@ -162,6 +164,9 @@ class ZabbixSyncManager:
     def run_sync(self):
         if not self.lock.acquire(blocking=False):
             return False
+        if self.timer:
+            self.timer.cancel()
+        self.next_sync_at = None
         self.running = True
         self._run()
         return True
@@ -193,6 +198,7 @@ class ZabbixSyncManager:
             self.running = False
             self.lock.release()
             if self.scheduler_enabled:
-                self.timer = threading.Timer(self.config["interval_seconds"], self.start)
+                self.next_sync_at = datetime.now(timezone.utc) + timedelta(seconds=self.config["interval_seconds"])
+                self.timer = threading.Timer(max(0, (self.next_sync_at - datetime.now(timezone.utc)).total_seconds()), self.start)
                 self.timer.daemon = True
                 self.timer.start()

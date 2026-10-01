@@ -78,7 +78,7 @@ Zabbix syncs independently every 60 seconds. Failed syncs keep the last successf
 
 ## Good to know
 
-- GitHub syncs every 5 minutes by default. **Sync now** refreshes GitHub; OTRS and Zabbix sync independently.
+- GitHub syncs every 5 minutes by default. The sidebar shows the status and next sync for every enabled source; OTRS and Zabbix sync independently.
 - The notification bell reports observed GitHub changes and changes in configured OTRS attention queues. Browser alerts are optional and work while the tab is open.
 - DevCockpit has no user login and binds to localhost by default. Do not expose it without access control.
 - `config.yml` and `instance/` are ignored by Git. The SQLite database is a local cache.
