@@ -25,7 +25,7 @@
       <a class="sidebar-link{% if active_endpoint == endpoint %} is-active{% endif %}" href="{{ url_for(endpoint) }}"{% if active_endpoint == endpoint %} aria-current="page"{% endif %}>{{ icon(icon_name) }}<span>{{ label }}</span></a>
       {% endfor %}
       <div class="nav-caption nav-caption-secondary">Explore</div>
-      {% for endpoint,label,icon_name in [('issues_page','Issues','circle-dot'),('pulls_page','Pull Requests','git-pull-request'),('releases_page','Releases','tag'),('board','Board','boxes'),('statistics_page','Statistics','activity')] %}
+      {% for endpoint,label,icon_name in [('issues_page','Issues','circle-dot'),('pulls_page','Pull Requests','git-pull-request'),('releases_page','Releases','tag'),('statistics_page','Statistics','activity')] %}
       <a class="sidebar-link{% if active_endpoint == endpoint %} is-active{% endif %}" href="{{ url_for(endpoint) }}"{% if active_endpoint == endpoint %} aria-current="page"{% endif %}>{{ icon(icon_name) }}<span>{{ label }}</span></a>
       {% endfor %}
       {% if otrs_enabled %}<div class="nav-caption nav-caption-secondary">Tickets</div>

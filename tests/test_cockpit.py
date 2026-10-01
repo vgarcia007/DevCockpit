@@ -315,7 +315,7 @@ team:
     assert "No tracked active or assigned work" not in page
 
 
-def test_board_filters_by_person_and_repository(tmp_path):
+def test_old_board_links_redirect_to_issues_with_filters(tmp_path):
     config = tmp_path / "config.yml"
     config.write_text("""repositories:
   - name: One
@@ -326,43 +326,15 @@ team:
   - github: alice
     name: Alice
 """, encoding="utf-8")
-    database = tmp_path / "board.sqlite"
-    app = create_app(config_path=config, database_path=database, auto_sync=False)
-    now = datetime.now(timezone.utc)
-    cases = [
-        (1, "One", "Shared work", ["alice", "bob"]),
-        (2, "One", "Open slot", []),
-        (3, "Two", "Other repo", ["alice"]),
-        (4, "One", "Different person", ["malice"]),
-    ]
-    with make_session(database)() as session:
-        for number, repo, title, assignees in cases:
-            session.add(Issue(github_id=number, repository_name=repo, number=number,
-                              title=title, url=f"https://github.com/acme/{repo.lower()}/issues/{number}",
-                              state="open", created_at=now, updated_at=now,
-                              workflow="Ready", workflow_state="known", assignees=assignees))
-        session.commit()
-
+    app = create_app(config_path=config, database_path=tmp_path / "board.sqlite", auto_sync=False)
     with app.test_client() as client:
-        page = client.get("/board").get_data(as_text=True)
-        assert 'name="person"' in page
-        assert "Alice (@alice)" in page and "@bob" in page and "@malice" in page
-
-        page = client.get("/board?person=ALICE").get_data(as_text=True)
-        assert "Shared work" in page and "Other repo" in page
-        assert "Different person" not in page and "Open slot" not in page
-        assert '<option value="alice" selected>' in page
-
-        page = client.get("/board?repo=One&person=alice").get_data(as_text=True)
-        assert "Shared work" in page and "Other repo" not in page
-        assert '<option value="One" selected>' in page
-        assert '<option value="alice" selected>' in page
-
-        page = client.get("/board?person=bob").get_data(as_text=True)
-        assert "Shared work" in page and "Other repo" not in page
-
-        page = client.get("/board?person=~unassigned").get_data(as_text=True)
-        assert "Open slot" in page and "Shared work" not in page
+        assert client.get("/board").location == "/issues"
+        assert client.get("/board?person=alice").location == "/issues?member=alice"
+        assert client.get("/board?repo=One&person=alice").location == "/issues?repo=One&member=alice"
+        assert client.get("/board?person=~unassigned").location == "/issues?unassigned=1"
+        assert client.get("/board?repo=Two&person=~unassigned").location == "/issues?repo=Two&unassigned=1"
+        page = client.get("/issues").get_data(as_text=True)
+        assert 'href="/board"' not in page
 
 
 def test_notifications_count_only_recent_configured_changes_and_paginate(tmp_path):
@@ -674,8 +646,7 @@ def test_sync_isolated_repos_cache_rebuild_and_views(tmp_path, monkeypatch):
         assert client.get("/issues").status_code == 200
         assert "Practice project" not in client.get("/issues").get_data(as_text=True)
         assert client.get("/pulls").status_code == 200
-        assert client.get("/board").status_code == 200
-        assert "Practice project" not in client.get("/board").get_data(as_text=True)
+        assert client.get("/board").location == "/issues"
         repositories_page = client.get("/repositories")
         assert repositories_page.status_code == 200
         assert 'href="https://github.com/orgs/acme/projects/1" target="_blank" rel="noopener noreferrer"' in repositories_page.get_data(as_text=True)
@@ -696,7 +667,7 @@ def test_sync_isolated_repos_cache_rebuild_and_views(tmp_path, monkeypatch):
         assert client.get("/pulls/One/20").status_code == 200
         assert client.post("/issues/One/10").status_code == 405
         assert client.post("/board").status_code == 405
-        for path in ("/", "/brief", "/now", "/team", "/issues", "/pulls", "/board",
+        for path in ("/", "/brief", "/now", "/team", "/issues", "/pulls",
                      "/repositories/One", "/releases", "/search?q=login"):
             page = client.get(path).get_data(as_text=True)
             github_links = re.findall(r'<a\b[^>]*href="https://github\.com[^\"]*"[^>]*>', page)
