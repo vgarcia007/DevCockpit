@@ -8,6 +8,7 @@ from urllib.parse import urlencode, urljoin
 import requests
 from sqlalchemy import delete
 
+from .accounts import AccountSyncMixin
 from .models import ZabbixHost, ZabbixProblem, ZabbixSyncState
 
 LOG = logging.getLogger(__name__)
@@ -137,8 +138,9 @@ class ZabbixClient:
             self.session.close()
 
 
-class ZabbixSyncManager:
-    def __init__(self, sessions, config):
+class ZabbixSyncManager(AccountSyncMixin):
+    def __init__(self, sessions, config, credential_provider=None):
+        self.init_accounts(credential_provider)
         self.sessions = sessions
         self.config = config
         self.lock = threading.Lock()
@@ -154,6 +156,13 @@ class ZabbixSyncManager:
     def start(self):
         if not self.lock.acquire(blocking=False):
             return False
+        if not self.credentials_available():
+            if self.timer:
+                self.timer.cancel()
+                self.timer = None
+            self.next_sync_at = None
+            self.lock.release()
+            return False
         if self.timer:
             self.timer.cancel()
         self.next_sync_at = None
@@ -163,6 +172,13 @@ class ZabbixSyncManager:
 
     def run_sync(self):
         if not self.lock.acquire(blocking=False):
+            return False
+        if not self.credentials_available():
+            if self.timer:
+                self.timer.cancel()
+                self.timer = None
+            self.next_sync_at = None
+            self.lock.release()
             return False
         if self.timer:
             self.timer.cancel()
@@ -174,7 +190,7 @@ class ZabbixSyncManager:
     def _run(self):
         attempted = datetime.now(timezone.utc)
         try:
-            hosts, problems = ZabbixClient(self.config).fetch_all()
+            hosts, problems = ZabbixClient(self.client_config()).fetch_all()
             with self.sessions() as session:
                 session.execute(delete(ZabbixProblem))
                 session.execute(delete(ZabbixHost))
@@ -195,10 +211,9 @@ class ZabbixSyncManager:
                 session.add(state)
                 session.commit()
         finally:
-            self.running = False
-            self.lock.release()
-            if self.scheduler_enabled:
-                self.next_sync_at = datetime.now(timezone.utc) + timedelta(seconds=self.config["interval_seconds"])
-                self.timer = threading.Timer(max(0, (self.next_sync_at - datetime.now(timezone.utc)).total_seconds()), self.start)
-                self.timer.daemon = True
-                self.timer.start()
+            try:
+                if self.scheduler_enabled:
+                    self.schedule_next()
+            finally:
+                self.running = False
+                self.lock.release()

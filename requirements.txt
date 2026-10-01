@@ -3,3 +3,4 @@ SQLAlchemy>=2.0,<3
 PyYAML>=6,<7
 pytest>=8,<10
 requests>=2.31,<3
+cryptography>=44,<51

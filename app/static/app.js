@@ -41,11 +41,19 @@ if (syncLabel) {
       if (!row) continue;
       const state = unavailable ? 'unavailable' : source.state;
       row.className = `sync-source is-${state}`;
-      const labels = {running: 'Syncing…', paused: 'Paused', error: 'Error', unavailable: 'Unavailable'};
+      const labels = {running: 'Syncing…', paused: 'Paused', error: 'Error', unavailable: 'Unavailable', account_required: 'Account required', credential_error: 'Storage error'};
       row.querySelector('.sync-source-value').textContent = labels[state] ||
         (source.next_sync_at ? duration(remaining(source.next_sync_at)) : 'Waiting');
       row.querySelector('.sync-details').textContent = unavailable ?
         'Sync status unavailable. Showing last known details.\n' + source.details : source.details;
+      const card = document.querySelector(`[data-account-card="${source.id}"]`);
+      if (card) {
+        const busy = card.querySelector('[data-account-busy]');
+        if (busy) busy.hidden = !(source.running || source.busy);
+        card.querySelectorAll('button').forEach(button => {
+          button.disabled = unavailable || source.running || source.busy || Boolean(button.form?.dataset.submitting);
+        });
+      }
     }
 
   };
@@ -91,6 +99,13 @@ if (syncLabel) {
   setInterval(renderSources, 1000);
   refreshSyncStatus();
 }
+
+document.querySelectorAll('[data-account-form]').forEach(form => {
+  form.addEventListener('submit', () => {
+    form.dataset.submitting = '1';
+    form.querySelectorAll('button').forEach(button => { button.disabled = true; });
+  });
+});
 
 (() => {
   const trigger = document.getElementById('notification-trigger');

@@ -38,3 +38,13 @@ def test_first_start_does_not_signal_other_processes(monkeypatch):
     monkeypatch.setattr(launcher.os, 'kill', unexpected)
     monkeypatch.setattr(launcher.os, 'killpg', unexpected)
     launcher.stop_existing()
+
+
+def test_github_check_fails_before_existing_app_is_stopped(monkeypatch):
+    import pytest
+    def failed_auth():
+        raise ValueError('Run gh auth login')
+    monkeypatch.setattr(launcher, 'github_preflight', failed_auth)
+    monkeypatch.setattr(launcher, 'stop_existing', lambda: pytest.fail('Existing app must keep running'))
+    with pytest.raises(SystemExit, match='gh auth login'):
+        launcher.main()

@@ -1,20 +1,24 @@
 import logging
 import re
 import unicodedata
+import secrets
+import hmac
+import ipaddress
 from calendar import month_abbr, monthrange
 from datetime import datetime, timedelta, timezone
 from math import ceil
 from pathlib import Path
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
-from flask import Flask, abort, redirect, render_template, request, url_for, jsonify
+from flask import Flask, abort, redirect, render_template, request, url_for, jsonify, session as browser_session
 from sqlalchemy import and_, delete, func, or_, select
 from .config import ROOT, load_config
 from .models import ExternalTeamIssue, ExternalTeamSync, Issue, ObservedChange, OTRSObservedChange, OTRSSyncState, OTRSTicket, OTRSTicketStat, Pull, Release, Repository, SyncMeta, UserAvatar, make_session
-from .otrs import OTRSSyncManager
+from .otrs import OTRSSyncManager, OTRSClient, OTRSError
 from .sync import SyncManager
 from .models import ZabbixHost, ZabbixProblem, ZabbixSyncState
-from .zabbix import SEVERITIES, ZabbixSyncManager, host_url, problem_duration, problem_url
+from .zabbix import SEVERITIES, ZabbixSyncManager, ZabbixClient, ZabbixError, host_url, problem_duration, problem_url
+from .accounts import AccountStore, AccountError, account_binding
 
 LOG = logging.getLogger(__name__)
 PRIORITIES = ["Urgent", "High", "Medium", "Low"]
@@ -236,7 +240,7 @@ def workflow_readable(repo):
     return repo.project_state == "available" and "Project status field is missing" not in (repo.error or "")
 
 
-def create_app(config_path=None, database_path=None, auto_sync=True):
+def create_app(config_path=None, database_path=None, auto_sync=True, credential_store=None):
     cfg = load_config(config_path)
     instance = ROOT / "instance"
     instance.mkdir(exist_ok=True)
@@ -245,6 +249,31 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
     otrs_enabled = bool(otrs_config and otrs_config.get("enabled"))
     zabbix_config = cfg.get("zabbix")
     zabbix_enabled = bool(zabbix_config and zabbix_config.get("enabled"))
+    account_store = credential_store or AccountStore()
+    integration_configs = {"otrs": otrs_config, "zabbix": zabbix_config}
+
+    def clear_account_cache(provider, binding=None):
+        tables = (OTRSTicket, OTRSTicketStat, OTRSSyncState, OTRSObservedChange) if provider == "otrs" else (ZabbixProblem, ZabbixHost, ZabbixSyncState)
+        with sessions() as db:
+            for table in tables:
+                db.execute(delete(table))
+            key = "account_binding:" + provider
+            db.execute(delete(SyncMeta).where(SyncMeta.key == key))
+            if binding:
+                db.add(SyncMeta(key=key, value=binding))
+            db.commit()
+
+    def credentials_for(provider):
+        account = account_store.get(provider, integration_configs[provider]["url"])
+        if not account:
+            clear_account_cache(provider)
+            return None
+        binding = account_binding(provider, integration_configs[provider]["url"], account)
+        with sessions() as db:
+            previous = db.get(SyncMeta, "account_binding:" + provider)
+        if not previous or previous.value != binding:
+            clear_account_cache(provider, binding)
+        return account
     configured = {repo["name"] for repo in cfg["repositories"]}
     configured_repositories = {repo["name"]: repo for repo in cfg["repositories"]}
     with sessions() as session:
@@ -264,9 +293,18 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
         session.commit()
     manager = SyncManager(sessions, cfg)
     otrs_manager = OTRSSyncManager(sessions, otrs_config,
-                                   include_responsible=any(person.get("otrs_user") for person in cfg["team"])) if otrs_enabled else None
-    zabbix_manager = ZabbixSyncManager(sessions, zabbix_config) if zabbix_enabled else None
+                                   include_responsible=any(person.get("otrs_user") for person in cfg["team"]),
+                                   credential_provider=lambda: credentials_for("otrs")) if otrs_enabled else None
+    zabbix_manager = ZabbixSyncManager(sessions, zabbix_config,
+                                    credential_provider=lambda: credentials_for("zabbix")) if zabbix_enabled else None
+    integration_managers = {"otrs": otrs_manager, "zabbix": zabbix_manager}
+    for provider, sync_manager in integration_managers.items():
+        if sync_manager and not sync_manager.credentials_available():
+            clear_account_cache(provider)
     app = Flask(__name__)
+    app.secret_key = secrets.token_bytes(32)
+    app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Strict", MAX_CONTENT_LENGTH=65536)
+    app.config["ACCOUNT_STORE"] = account_store
     app.config["COCKPIT_CONFIG"] = cfg
     app.config["SYNC_MANAGER"] = manager
     app.config["OTRS_SYNC_MANAGER"] = otrs_manager
@@ -315,18 +353,21 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
                 sources.append({"id": key, "name": name, "running": sync_manager.running,
                     "last_success": timestamp(state.last_success) if state else None,
                     "next_sync_at": timestamp(sync_manager.next_sync_at) if not sync_manager.running else None,
-                    "error": state.error if state else None, "rate_limit_until": None})
+                    "error": sync_manager.account_error or (state.error if state else None),
+                    "account_state": sync_manager.account_state, "busy": sync_manager.lock.locked(), "rate_limit_until": None})
         for source in sources:
-            source["state"] = ("running" if source["running"] else "paused" if source["rate_limit_until"]
+            source["state"] = source.get("account_state") or ("running" if source["running"] else "paused" if source["rate_limit_until"]
                                else "error" if source["error"] else "healthy" if source["last_success"] else "pending")
-            source["display"] = {"running": "Syncing…", "paused": "Paused", "error": "Error"}.get(source["state"], "Waiting")
+            source["display"] = {"running": "Syncing…", "paused": "Paused", "error": "Error",
+                "account_required": "Account required", "credential_error": "Storage error"}.get(source["state"], "Waiting")
             if source["state"] in ("healthy", "pending") and source["next_sync_at"]:
                 seconds = max(0, ceil((datetime.fromisoformat(source["next_sync_at"]) - datetime.now(timezone.utc)).total_seconds()))
                 hours, remainder = divmod(seconds, 3600)
                 minutes, seconds = divmod(remainder, 60)
                 source["display"] = (f"{hours}:" if hours else "") + f"{minutes:02d}:{seconds:02d}"
             details = [source["name"] + " · " + {"running": "Sync running", "paused": "GitHub rate limit · sync paused",
-                "error": "Last sync failed", "healthy": "Last sync successful", "pending": "Waiting for first sync"}[source["state"]]]
+                "error": "Last sync failed", "healthy": "Last sync successful", "pending": "Waiting for first sync",
+                "account_required": "Account required · open Settings → Accounts", "credential_error": "Account storage error · open Settings → Accounts"}[source["state"]]]
             details.append("Last successful sync: " + (fmt_time(datetime.fromisoformat(source["last_success"])) if source["last_success"] else "None yet"))
             if source["next_sync_at"]:
                 details.append("Next sync: " + fmt_time(datetime.fromisoformat(source["next_sync_at"])))
@@ -348,6 +389,9 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
                 "sync_sources": sync_sources(meta, otrs_state, zabbix_state,
                     [{"repository": repo.name, "error": repo.error} for repo in repos if repo.error]),
                 "sync_server_time": datetime.now(timezone.utc).isoformat(),
+                "account_notices": [{"name": provider.upper() if provider == "otrs" else "Zabbix",
+                    "error": sync_manager.account_error} for provider, sync_manager in integration_managers.items()
+                    if sync_manager and sync_manager.account_state],
                 "otrs_last_success": otrs_state.last_success if otrs_state else None,
                 "zabbix_enabled": zabbix_enabled, "zabbix_state": zabbix_state,
                 "zabbix_revision": zabbix_state.last_attempt.isoformat() if zabbix_state and zabbix_state.last_attempt else "",
@@ -833,6 +877,116 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
         return render_template("search.html", **common(repos, meta), q=q, issues=matching_issues[:100],
                                pulls=matching_pulls[:100], tickets=matching_tickets[:100],
                                otrs_url=otrs_config["url"].rstrip("/") + "/index.pl" if otrs_manager else None)
+
+    def render_accounts(error=None, status=200):
+        cards = []
+        for provider, settings in integration_configs.items():
+            sync_manager = integration_managers[provider]
+            account, storage_error = None, None
+            if sync_manager:
+                try:
+                    account = account_store.get(provider, settings["url"])
+                except AccountError as exc:
+                    storage_error = str(exc)
+            cards.append({"id": provider, "name": "OTRS" if provider == "otrs" else "Zabbix",
+                "enabled": sync_manager is not None, "url": settings["url"] if sync_manager else "",
+                "user": account["user"] if account else "", "storage_error": storage_error,
+                "busy": (sync_manager.running or (request.method == "GET" and sync_manager.lock.locked())) if sync_manager else False})
+        repos, _, _, _, meta = snapshot()
+        browser_session.setdefault("accounts_csrf", secrets.token_urlsafe(32))
+        return render_template("accounts.html", **common(repos, meta), accounts=cards,
+            csrf_token=browser_session["accounts_csrf"], account_form_error=error,
+            account_saved=request.args.get("saved") == "1", account_removed=request.args.get("removed") == "1"), status
+
+    @app.after_request
+    def private_account_responses(response):
+        if request.path.startswith("/settings/accounts"):
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["Referrer-Policy"] = "same-origin"
+        return response
+
+    @app.get("/settings/accounts")
+    def accounts_page():
+        return render_accounts()
+
+    def account_request(provider):
+        if provider not in integration_managers or not integration_managers[provider]:
+            abort(404)
+        if urlsplit(request.host_url).hostname not in ("localhost", "127.0.0.1", "::1"):
+            abort(403)
+        try:
+            if not ipaddress.ip_address(request.remote_addr or "").is_loopback:
+                abort(403)
+        except ValueError:
+            abort(403)
+        origin = request.headers.get("Origin")
+        if origin and origin.rstrip("/") != request.host_url.rstrip("/"):
+            abort(403)
+        token = request.form.get("csrf_token", "")
+        expected = browser_session.get("accounts_csrf", "")
+        if not expected or not hmac.compare_digest(token, expected):
+            abort(403)
+        sync_manager = integration_managers[provider]
+        if not sync_manager.lock.acquire(blocking=False):
+            return None
+        return sync_manager
+
+    @app.post("/settings/accounts/<provider>")
+    def save_account(provider):
+        sync_manager = account_request(provider)
+        if not sync_manager:
+            return render_accounts("A sync is running. Wait for it to finish before changing this account.", 409)
+        previous_next = sync_manager.next_sync_at
+        if sync_manager.timer:
+            sync_manager.timer.cancel()
+        sync_manager.next_sync_at = None
+        changed = False
+        try:
+            user, password = request.form.get("user", "").strip(), request.form.get("password", "")
+            if not user or not password:
+                return render_accounts("Enter both username and password.", 400)
+            candidate = {**integration_configs[provider], "user": user, "password": password}
+            if provider == "otrs":
+                OTRSClient(candidate, include_responsible=sync_manager.include_responsible).fetch_all()
+            else:
+                ZabbixClient(candidate).fetch_all()
+            account = account_store.set(provider, candidate["url"], user, password)
+            clear_account_cache(provider, account_binding(provider, candidate["url"], account))
+            sync_manager.credentials_available()
+            changed = True
+        except AccountError as exc:
+            return render_accounts(str(exc), 503)
+        except (OTRSError, ZabbixError):
+            return render_accounts("Connection check failed. Check the account, server and permissions; the previous account was kept.", 400)
+        except Exception:
+            LOG.warning("Account connection check failed: %s", provider)
+            return render_accounts("Connection check failed; the previous account was kept.", 503)
+        finally:
+            sync_manager.lock.release()
+            if auto_sync and changed:
+                sync_manager.enable_scheduler()
+            elif sync_manager.scheduler_enabled and sync_manager.credentials_available():
+                sync_manager.schedule_next(previous_next)
+        return redirect(url_for("accounts_page", saved="1"), code=303)
+
+    @app.post("/settings/accounts/<provider>/remove")
+    def remove_account(provider):
+        sync_manager = account_request(provider)
+        if not sync_manager:
+            return render_accounts("A sync is running. Wait for it to finish before removing this account.", 409)
+        try:
+            account_store.remove(provider, integration_configs[provider]["url"])
+            if sync_manager.timer:
+                sync_manager.timer.cancel()
+                sync_manager.timer = None
+            sync_manager.next_sync_at = None
+            clear_account_cache(provider)
+            sync_manager.credentials_available()
+        except AccountError as exc:
+            return render_accounts(str(exc), 503)
+        finally:
+            sync_manager.lock.release()
+        return redirect(url_for("accounts_page", removed="1"), code=303)
 
     @app.post("/sync")
     def sync_now():

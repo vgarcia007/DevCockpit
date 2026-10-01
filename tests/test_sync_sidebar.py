@@ -6,6 +6,7 @@ import yaml
 from app.models import OTRSSyncState, Repository, SyncMeta, ZabbixSyncState, make_session
 from app.otrs import OTRSClient, OTRSError, OTRSSyncManager
 from app.web import create_app
+from tests.account_helpers import accounts_for
 from app.zabbix import ZabbixClient, ZabbixError, ZabbixSyncManager
 
 
@@ -19,7 +20,7 @@ def sidebar_app(tmp_path, otrs=True, zabbix=True):
                    'url': 'https://monitoring.example.com/',
                    'hosts': [{'host': 'app', 'environment': 'prod'}]},
     }))
-    return create_app(path, tmp_path / 'sidebar.sqlite', auto_sync=False)
+    return create_app(path, tmp_path / 'sidebar.sqlite', auto_sync=False, credential_store=accounts_for(path))
 
 
 @pytest.mark.parametrize('otrs,zabbix,ids', [

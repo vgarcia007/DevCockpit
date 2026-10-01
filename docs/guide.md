@@ -37,7 +37,7 @@ To rebuild the local GitHub cache, stop the app, delete `instance/cockpit.sqlite
 
 ## Optional OTRS 5 tickets
 
-Add the commented `otrs` block from the example configuration and replace every example value. `enabled`, `url`, `user`, `password`, and `queue_ids` control access. The URL must use HTTPS. `queue_ids` is a nonempty list of numeric OTRS queue IDs. The integration uses an agent session and the AgentTicketSearch CSV export. It does not save a search profile.
+Add the commented `otrs` block from the example configuration and replace every example value. `enabled`, `url`, and `queue_ids` configure the integration. Enter the login under **Settings → Accounts**; credentials are encrypted outside the checkout. The URL must use HTTPS. `queue_ids` is a nonempty list of numeric OTRS queue IDs. The integration uses an agent session and the AgentTicketSearch CSV export. It does not save a search profile.
 
 `excluded_states` lists ticket status names to hide, ignoring case and surrounding spaces. Set this to the terminal states used by your installation. `attention_queue_ids` selects configured queues whose open tickets appear on the Overview and in notifications. `highlight_queue_ids` selects configured queues to emphasize in the ticket table. Both lists are empty by default. OTRS syncs independently every `otrs.interval_seconds` (default: 900 seconds; minimum: 60). Set `otrs.enabled: false` or remove the block to disable the integration; its cached tickets and OTRS notifications are cleared on restart.
 

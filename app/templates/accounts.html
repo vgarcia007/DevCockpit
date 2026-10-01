@@ -1,0 +1,29 @@
+{% extends 'base.html' %}
+{% block title %}Accounts · Dev-Cockpit{% endblock %}{% block workbar_title %}Accounts{% endblock %}
+{% block content %}
+<div class="page-heading"><div><h1 class="page-title">Accounts</h1><p>Manage the accounts used to sync your enabled integrations.</p></div></div>
+{% if account_form_error %}<div class="app-notice is-warning" role="alert">{{ account_form_error }}</div>{% endif %}
+{% if account_saved %}<div class="app-notice" role="status">Connection verified and account saved. The first sync is starting.</div>{% endif %}
+{% if account_removed %}<div class="app-notice" role="status">Account removed. This integration is waiting for a new account.</div>{% endif %}
+<div class="account-grid">
+<section class="panel account-card"><h2>GitHub</h2><p>Your GitHub CLI login is used automatically. Manage it with <code>gh auth status</code> and <code>gh auth login</code>.</p>{% if github_user %}<p>Configured GitHub user: <strong>{{ github_user }}</strong></p>{% endif %}<p>GitHub CLI authentication was checked at application startup.</p></section>
+{% for account in accounts %}
+<section class="panel account-card" data-account-card="{{ account.id }}" data-storage-blocked="{{ '1' if account.storage_error else '0' }}">
+<h2>{{ account.name }}</h2>
+{% if not account.enabled %}<p>Disabled in config.yml. No account is required.</p>
+{% else %}<p class="account-server">{{ account.url }}</p>
+{% if account.storage_error %}<div class="app-notice is-warning">{{ account.storage_error }}</div><p>Restore the matching accounts.enc and account.key files. To start over, remove both files and enter your accounts again. See the README for their locations.</p>
+{% else %}<p>{% if account.user %}Saved account: <strong>{{ account.user }}</strong>{% else %}No saved account. Enter a username and password to connect.{% endif %}</p>
+<form method="post" action="{{ url_for('save_account', provider=account.id) }}" data-account-form="{{ account.id }}" autocomplete="off">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<label for="{{ account.id }}-user">Username</label><input class="form-control" id="{{ account.id }}-user" name="user" value="{{ account.user }}" autocomplete="username" required>
+<label for="{{ account.id }}-password">{% if account.user %}New password{% else %}Password{% endif %}</label><input class="form-control" id="{{ account.id }}-password" type="password" name="password" autocomplete="new-password" required>
+<button class="account-action" type="submit"{% if account.busy %} disabled{% endif %}>Check connection and save</button>
+</form>
+{% if account.user %}<form method="post" action="{{ url_for('remove_account', provider=account.id) }}" data-account-form="{{ account.id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="account-remove" type="submit"{% if account.busy %} disabled{% endif %}>Remove account</button></form>{% endif %}
+{% endif %}<p class="account-busy" data-account-busy{% if not account.busy %} hidden{% endif %}>A sync or account change is running. Wait for it to finish before saving.</p>
+{% endif %}
+</section>{% endfor %}
+</div>
+<p class="account-storage-note">Accounts are encrypted on this computer and available after restarts. Keep the account file and its key private. Existing passwords are never displayed.</p>
+{% endblock %}

@@ -7,7 +7,8 @@ import signal
 import sys
 import time
 
-from .config import ROOT, load_config
+from .config import ROOT, load_config, remove_legacy_credentials
+from .accounts import AccountError, github_preflight
 
 
 def processes():
@@ -81,7 +82,12 @@ def stop_existing():
 
 
 def main():
-    load_config()
+    try:
+        github_preflight()
+        load_config()
+        remove_legacy_credentials()
+    except (ValueError, FileNotFoundError, AccountError, OSError) as exc:
+        sys.exit(f"Cannot start Dev-Cockpit: {exc}")
     (ROOT / 'instance').mkdir(exist_ok=True)
     with (ROOT / 'instance' / 'start.lock').open('a') as lock:
         try:

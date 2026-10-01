@@ -1,13 +1,17 @@
 from pathlib import Path
 import yaml
+from .accounts import atomic_write, server_url
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 def load_config(path=None):
     path = Path(path or ROOT / "config.yml")
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    if not isinstance(data.get("repositories"), list) or not data["repositories"]:
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        raise ValueError("config.yml is not valid YAML") from None
+    if not isinstance(data, dict) or not isinstance(data.get("repositories"), list) or not data["repositories"]:
         raise ValueError("config.yml needs a non-empty repositories list")
     names = set()
     for repo in data["repositories"]:
@@ -51,8 +55,6 @@ def load_config(path=None):
         if not isinstance(otrs["enabled"], bool):
             raise ValueError("otrs.enabled must be true or false")
         if otrs["enabled"]:
-            if not otrs.get("user") or not otrs.get("password"):
-                raise ValueError("otrs needs user and password when enabled")
             if not otrs.get("url"):
                 raise ValueError("otrs.url is required when enabled")
             if not otrs.get("queue_ids"):
@@ -63,8 +65,10 @@ def load_config(path=None):
                 raise ValueError("otrs.queue_ids must be a list of positive IDs")
             otrs.setdefault("attention_queue_ids", [])
             otrs.setdefault("highlight_queue_ids", [])
-            if not str(otrs["url"]).startswith("https://"):
-                raise ValueError("otrs.url must use HTTPS")
+            try:
+                otrs["url"] = server_url(str(otrs["url"]))
+            except ValueError as exc:
+                raise ValueError("otrs.url must be an HTTPS frontend URL without credentials, query or fragment") from exc
             if int(otrs["interval_seconds"]) < 60:
                 raise ValueError("otrs.interval_seconds must be at least 60")
             for key in ("attention_queue_ids", "highlight_queue_ids"):
@@ -73,6 +77,8 @@ def load_config(path=None):
                     raise ValueError(f"otrs.{key} must contain configured queue IDs")
             if not isinstance(otrs["excluded_states"], list) or any(not isinstance(s, str) for s in otrs["excluded_states"]):
                 raise ValueError("otrs.excluded_states must be a list of statuses")
+        otrs.pop("user", None)
+        otrs.pop("password", None)
         data["otrs"] = otrs
     if data.get("zabbix") is not None:
         zabbix = data["zabbix"]
@@ -82,10 +88,10 @@ def load_config(path=None):
         if not isinstance(zabbix["enabled"], bool):
             raise ValueError("zabbix.enabled must be true or false")
         if zabbix["enabled"]:
-            if not zabbix.get("user") or not zabbix.get("password"):
-                raise ValueError("zabbix needs user and password when enabled")
-            if not str(zabbix.get("url", "")).startswith("https://"):
-                raise ValueError("zabbix.url must use HTTPS")
+            try:
+                zabbix["url"] = server_url(str(zabbix.get("url", "")))
+            except ValueError as exc:
+                raise ValueError("zabbix.url must be an HTTPS frontend URL without credentials, query or fragment") from exc
             zabbix.setdefault("interval_seconds", 60)
             zabbix.setdefault("attention_min_severity", 0)
             zabbix.setdefault("history_days", 30)
@@ -106,6 +112,8 @@ def load_config(path=None):
                 if host["host"] in host_names:
                     raise ValueError("Duplicate zabbix host")
                 host_names.add(host["host"])
+        zabbix.pop("user", None)
+        zabbix.pop("password", None)
     unique = {}
     otrs_owners = set()
     for person in data.get("team", []):
@@ -120,3 +128,27 @@ def load_config(path=None):
         unique[person["github"].lower()] = person
     data["team"] = list(unique.values())
     return data
+
+
+def remove_legacy_credentials(path=None):
+    """Discard legacy credentials without importing or backing up plaintext."""
+    path = Path(path or ROOT / "config.yml")
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        raise ValueError("config.yml is not valid YAML") from None
+    changed = False
+    for provider in ("otrs", "zabbix"):
+        value = data.get(provider)
+        parts = value if isinstance(value, list) else [value]
+        for part in parts:
+            if isinstance(part, dict):
+                for key in ("user", "password"):
+                    if key in part:
+                        del part[key]
+                        changed = True
+        if isinstance(value, list):
+            data[provider] = [part for part in parts if part]
+    if changed:
+        atomic_write(path, yaml.safe_dump(data, sort_keys=False, allow_unicode=True).encode())
+    return changed

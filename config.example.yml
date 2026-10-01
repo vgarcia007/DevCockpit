@@ -38,20 +38,17 @@ sync:
 # otrs:
 #   enabled: true
 #   url: https://tickets.example.com/
-#   user: your-agent-login
-#   password: your-agent-password
 #   queue_ids: [1, 2]
 #   interval_seconds: 900
 #   excluded_states: [closed]
 #   attention_queue_ids: [1]
 #   highlight_queue_ids: [1]
 
+# Set enabled integration accounts in Settings → Accounts, not in this file.
 # Optional Zabbix 7.4 monitoring. Use the full frontend installation path.
 # zabbix:
 #   enabled: true
 #   url: https://monitoring.example.com/zabbix/
-#   user: your-login
-#   password: your-password
 #   interval_seconds: 60
 #   history_days: 30 # Problem history window (1–365 days), plus older open problems.
 #   attention_min_severity: 0 # 0: all; 1: Information; 2: Warning; 3: Average; 4: High; 5: Disaster.

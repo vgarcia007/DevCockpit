@@ -41,7 +41,7 @@ If a Project is unavailable, GitHub may need the `read:project` scope: `gh auth 
 
 ## Optional OTRS tickets
 
-Remove the comment markers from the `otrs` example in `config.yml`, then enter your own HTTPS URL, agent login, password, and queue IDs. `url` and `queue_ids` are required when OTRS is enabled. Tickets use a separate 15-minute sync and table.
+Remove the comment markers from the `otrs` example in `config.yml`, then enter your own HTTPS URL and queue IDs. After starting the app, open **Settings → Accounts** to enter and verify your agent login. `url` and `queue_ids` are required when OTRS is enabled. Tickets use a separate 15-minute sync and table.
 
 Use `excluded_states` to hide closed statuses, `attention_queue_ids` for tickets shown under **Need attention** and in notifications, and `highlight_queue_ids` for emphasized table rows. These lists are empty unless configured. Set `otrs.enabled: false` to stop OTRS and delete its local cache on restart. Keep `config.yml` private.
 
@@ -58,8 +58,6 @@ Add `zabbix` to your private `config.yml` (an example is in `config.example.yml`
 zabbix:
   enabled: true
   url: https://monitoring.example.com/zabbix/
-  user: your-login
-  password: your-password
   interval_seconds: 60
   attention_min_severity: 0
   history_days: 30
@@ -74,7 +72,19 @@ Use the frontend URL including its installation path, and the exact technical ho
 
 **Monitoring → Applications** shows hosts and problem history, including acknowledged and suppressed problems. By default, it shows open and resolved problems from the last 30 days, plus older problems that are still open. Short incidents between syncs are retrieved from Zabbix too. Filter by status, application, environment or severity, or search the problem list. Resolved problems show their end time and total duration. Set `history_days` (1–365, default 30) to change the history window; available history depends on Zabbix retention and your account permissions. **Need attention** includes only open problems from both environments at or above `attention_min_severity`: `0` Not classified, `1` Information, `2` Warning, `3` Average, `4` High, `5` Disaster. The default `0` includes everything.
 
-Zabbix syncs independently every 60 seconds. Failed syncs keep the last successful data and display an error. Set `zabbix.enabled: false` or remove the section to disable it. Restart with `./start.sh` after config changes. Keep credentials in the private config; they are never sent to the browser.
+Zabbix syncs independently every 60 seconds. Failed syncs keep the last successful data and display an error. Set `zabbix.enabled: false` or remove the section to disable it. Restart with `./start.sh` after config changes. Enter your Zabbix username and password under **Settings → Accounts**. Saved passwords are never displayed.
+
+## Saved accounts
+
+The app first checks that `gh` is installed and authenticated. Enabled OTRS and Zabbix integrations wait for an account under **Settings → Accounts**; GitHub continues to work. Each saved account is bound to its server URL, so changing the URL requires a matching account.
+
+The app checks the connection before saving. Accounts survive restarts and can be changed or removed on the same page. Account changes wait for a running sync to finish and clear that integration's local cache. Disabling an integration keeps its saved account for later use.
+
+Accounts are encrypted with AES-256-GCM in `~/.local/share/devcockpit/accounts.enc`. A random key is stored separately in `~/.config/devcockpit/account.key`. Directories are private (`0700`), files are readable only by your OS user (`0600`). No OS keyring or master password is required. Anyone who can read both files can decrypt the accounts; keep both private.
+
+Older `user` and `password` config fields are removed on startup, without importing them. Enter the accounts again in the browser. Never add passwords to `config.yml`.
+
+Back up both account files together. If the key is lost or storage is damaged, restore the matching pair. To reset accounts, stop the app, remove both files, restart, and enter accounts again. A missing key is never silently replaced while encrypted accounts exist.
 
 ## Good to know
 

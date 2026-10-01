@@ -496,3 +496,17 @@ body { font-size:14px; line-height:1.5; background:var(--color-bg); }
 .statistics-list .quiet-empty { margin:0; padding:7px 0; }
 @media(max-width:900px) { .statistics-grid { grid-template-columns:1fr; } }
 @media(max-width:600px) { .statistics-period { padding:10px; }.statistics-period>div { display:grid; gap:0; }.statistics-item { flex-wrap:wrap; }.statistics-item time { width:100%; margin-left:0; padding-left:0; } }
+
+.account-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr)); gap:18px; align-items:start; }
+.account-card { padding:22px; }
+.account-card h2 { margin:0 0 12px; font-size:17px; }
+.account-card p { font-size:12px; color:var(--color-muted); }
+.account-server { overflow-wrap:anywhere; }
+.account-card label { display:block; margin:12px 0 5px; font-size:12px; font-weight:650; }
+.account-card .form-control { font-size:13px; }
+.account-action, .account-remove { margin-top:15px; padding:8px 11px; border:1px solid var(--color-border); border-radius:6px; background:var(--color-surface); color:var(--color-accent); font-size:12px; font-weight:650; }
+.account-action:disabled, .account-remove:disabled { opacity:.5; cursor:wait; }
+.account-remove { color:var(--color-muted); }
+.account-storage-note { margin-top:22px; font-size:12px; color:var(--color-muted); }
+.sync-source.is-credential_error .sync-source-dot { background:#efba77; }
+.sync-source.is-credential_error .sync-source-value { color:#efba77; }

@@ -40,7 +40,7 @@ def test_config_accepts_existing_credential_list_and_optional_absence(tmp_path):
     assert settings["attention_queue_ids"] == [1, 2]
     assert settings["highlight_queue_ids"] == [1]
     assert settings["enabled"] is True
-    assert settings["user"] == "agent"
+    assert "user" not in settings and "password" not in settings
     assert "otrs" not in load_config(config_file(tmp_path))
     assert load_config(config_file(tmp_path, {"enabled": False}))["otrs"] == {"enabled": False}
 

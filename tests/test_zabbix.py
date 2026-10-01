@@ -6,6 +6,7 @@ import yaml
 from sqlalchemy import select
 
 from app.config import load_config
+from tests.account_helpers import accounts_for
 from app.models import ZabbixHost, ZabbixProblem, ZabbixSyncState, make_session
 from app.web import create_app
 from app.zabbix import SEVERITIES, ZabbixClient, ZabbixError, problem_duration
@@ -37,7 +38,7 @@ def snapshot():
 @pytest.mark.parametrize("changes", [
     {"attention_min_severity": 6}, {"attention_min_severity": True}, {"interval_seconds": 5},
     {"history_days": 0}, {"history_days": 366}, {"history_days": True},
-    {"url": "http://monitoring.example.com/"}, {"password": ""}, {"hosts": []},
+    {"url": "http://monitoring.example.com/"}, {"hosts": []},
     {"hosts": [{"host": "a", "environment": "unknown"}]},
     {"hosts": [{"host": "a", "environment": "prod"}, {"host": "a", "environment": "preprod"}]},
 ])
@@ -49,7 +50,7 @@ def test_invalid_zabbix_config_is_rejected(tmp_path, changes):
 def test_zabbix_sync_views_filters_failure_and_recovery(tmp_path, monkeypatch):
     path = config_file(tmp_path)
     database = tmp_path / "monitoring.sqlite"
-    app = create_app(path, database, auto_sync=False)
+    app = create_app(path, database, auto_sync=False, credential_store=accounts_for(path))
     manager = app.config["ZABBIX_SYNC_MANAGER"]
     monkeypatch.setattr(ZabbixClient, "fetch_all", lambda self: snapshot())
     assert manager.run_sync()
@@ -113,7 +114,7 @@ def test_disabled_zabbix_ignores_cached_monitoring_data(tmp_path):
     path = tmp_path / "config.yml"
     path.write_text(yaml.safe_dump({"repositories": [{"name": "One", "url": "/acme/one"}],
                                    "zabbix": {"enabled": False}}))
-    app = create_app(path, database, auto_sync=False)
+    app = create_app(path, database, auto_sync=False, credential_store=accounts_for(path))
     assert app.config["ZABBIX_SYNC_MANAGER"] is None
     client = app.test_client()
     assert client.get("/monitoring").status_code == 404
@@ -169,7 +170,7 @@ class FakeSession:
 
 
 def test_api_client_maps_shared_problems_and_logs_out(tmp_path):
-    settings = load_config(config_file(tmp_path))["zabbix"]
+    settings = {**load_config(config_file(tmp_path))["zabbix"], "user": "test-user", "password": "private-password"}
     session = FakeSession()
     hosts, problems = ZabbixClient(settings, session).fetch_all()
     assert len(hosts) == 2 and len(problems) == 2
@@ -186,7 +187,7 @@ def test_api_client_maps_shared_problems_and_logs_out(tmp_path):
 
 def test_brief_incident_is_visible_in_history_but_not_attention(tmp_path, monkeypatch):
     path = config_file(tmp_path)
-    app = create_app(path, tmp_path / 'history.sqlite', auto_sync=False)
+    app = create_app(path, tmp_path / 'history.sqlite', auto_sync=False, credential_store=accounts_for(path))
     manager = app.config['ZABBIX_SYNC_MANAGER']
     hosts, problems = snapshot()
     short = dict(problems[4], eventid='brief', name='Brief outage',
@@ -215,7 +216,7 @@ def test_brief_incident_is_visible_in_history_but_not_attention(tmp_path, monkey
 
 
 def test_history_pagination_and_missing_recovery(tmp_path):
-    settings = load_config(config_file(tmp_path, history_days=7))['zabbix']
+    settings = {**load_config(config_file(tmp_path, history_days=7))['zabbix'], 'user': 'test-user', 'password': 'private-password'}
 
     class PagedSession(FakeSession):
         def post(self, url, json, **kwargs):
@@ -241,7 +242,7 @@ def test_history_pagination_and_missing_recovery(tmp_path):
 
     session = MissingRecoverySession()
     with pytest.raises(ZabbixError, match='recovery events'):
-        ZabbixClient(load_config(config_file(tmp_path))['zabbix'], session).fetch_all()
+        ZabbixClient({**load_config(config_file(tmp_path))['zabbix'], 'user': 'test-user', 'password': 'private-password'}, session).fetch_all()
     assert session.methods[-1] == 'user.logout' and session.closed
 
 

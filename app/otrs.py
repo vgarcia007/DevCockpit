@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 import requests
 from sqlalchemy import delete, select
 
+from .accounts import AccountSyncMixin
 from .models import OTRSObservedChange, OTRSSyncState, OTRSTicket, OTRSTicketStat
 
 LOG = logging.getLogger(__name__)
@@ -258,8 +259,9 @@ class OTRSClient:
             self.session.close()
 
 
-class OTRSSyncManager:
-    def __init__(self, sessions, config, include_responsible=False):
+class OTRSSyncManager(AccountSyncMixin):
+    def __init__(self, sessions, config, include_responsible=False, credential_provider=None):
+        self.init_accounts(credential_provider)
         self.sessions = sessions
         self.config = config
         self.include_responsible = include_responsible
@@ -276,6 +278,13 @@ class OTRSSyncManager:
     def start(self):
         if not self.lock.acquire(blocking=False):
             return False
+        if not self.credentials_available():
+            if self.timer:
+                self.timer.cancel()
+                self.timer = None
+            self.next_sync_at = None
+            self.lock.release()
+            return False
         if self.timer:
             self.timer.cancel()
         self.next_sync_at = None
@@ -285,6 +294,13 @@ class OTRSSyncManager:
 
     def run_sync(self):
         if not self.lock.acquire(blocking=False):
+            return False
+        if not self.credentials_available():
+            if self.timer:
+                self.timer.cancel()
+                self.timer = None
+            self.next_sync_at = None
+            self.lock.release()
             return False
         if self.timer:
             self.timer.cancel()
@@ -296,7 +312,7 @@ class OTRSSyncManager:
     def _run(self):
         attempted = datetime.now(timezone.utc)
         try:
-            rows = OTRSClient(self.config, include_responsible=self.include_responsible).fetch_all()
+            rows = OTRSClient(self.client_config(), include_responsible=self.include_responsible).fetch_all()
             active_rows = [row for row in rows.values() if not excluded(row["state"], self.config)]
             with self.sessions() as session:
                 state = session.get(OTRSSyncState, "tickets") or OTRSSyncState(key="tickets")
@@ -329,10 +345,9 @@ class OTRSSyncManager:
                 session.add(state)
                 session.commit()
         finally:
-            self.running = False
-            self.lock.release()
-            if self.scheduler_enabled:
-                self.next_sync_at = datetime.now(timezone.utc) + timedelta(seconds=int(self.config["interval_seconds"]))
-                self.timer = threading.Timer(max(0, (self.next_sync_at - datetime.now(timezone.utc)).total_seconds()), self.start)
-                self.timer.daemon = True
-                self.timer.start()
+            try:
+                if self.scheduler_enabled:
+                    self.schedule_next()
+            finally:
+                self.running = False
+                self.lock.release()
