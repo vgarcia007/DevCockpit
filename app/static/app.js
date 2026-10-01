@@ -9,6 +9,9 @@ const syncButton = document.getElementById('sync-button');
 const syncLabel = document.getElementById('sync-label');
 const syncCountdown = document.getElementById('sync-countdown');
 if (syncCountdown) {
+  const renderedGitHubSync = syncLabel?.dataset.lastSuccess || '';
+  const renderedOtrsSync = syncLabel?.dataset.otrsLastSuccess || '';
+  let syncWasRunning = false;
   let nextSyncAt = null;
   let cooldownUntil = null;
   let syncRunning = false;
@@ -39,8 +42,13 @@ if (syncCountdown) {
       syncRunning = data.running;
       if (data.running) syncLabel.textContent = 'Sync running…';
       else if (data.last_success) syncLabel.textContent = 'Last sync ' + new Date(data.last_success).toLocaleString('de-DE');
-      if (window._syncWasRunning && !data.running) window.location.reload();
-      window._syncWasRunning = data.running;
+      if ((data.last_success || '') !== renderedGitHubSync ||
+          (data.otrs_last_success || '') !== renderedOtrsSync ||
+          (syncWasRunning && !data.running)) {
+        window.location.reload();
+        return;
+      }
+      syncWasRunning = data.running;
       renderCountdown();
     } catch (_) { syncCountdown.textContent = 'Sync status unavailable'; }
   };
@@ -53,6 +61,7 @@ if (syncCountdown) {
       syncLabel.textContent = data.started ? 'Sync running…' : data.reason === 'rate_limit' ?
         'GitHub limit · sync paused' : 'Sync already running…';
       syncRunning = data.running;
+      syncWasRunning = data.running;
       nextSyncAt = data.next_sync_at;
       cooldownUntil = data.rate_limit_until;
       renderCountdown();

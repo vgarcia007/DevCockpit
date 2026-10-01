@@ -426,6 +426,8 @@ def test_statistics_combines_weekly_github_and_otrs_activity(tmp_path):
         response = client.get("/statistics?week=2026-W39")
         assert response.status_code == 200
         html = response.get_data(as_text=True)
+        assert f'data-otrs-last-success="{inside.isoformat()}"' in html
+        assert client.get("/sync/status").get_json()["otrs_last_success"] == inside.isoformat()
         assert 'href="/statistics?week=2026-W38"' in html
         assert 'href="/statistics?week=2026-W40"' in html
         assert 'href="/statistics?week=2026-W39"' in html or "Week 39" in html

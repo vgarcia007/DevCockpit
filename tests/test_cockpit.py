@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from app.github import GitHubCliClient, GitHubError, project_items
 from app.changes import detect_changes
-from app.models import ExternalTeamIssue, ExternalTeamSync, Issue, ObservedChange, Pull, Release, Repository, UserAvatar, make_session
+from app.models import ExternalTeamIssue, ExternalTeamSync, Issue, ObservedChange, Pull, Release, Repository, SyncMeta, UserAvatar, make_session
 from app.sync import SyncManager, ci_state, issue_data, issue_field_priorities, pull_data, review_state, search_assigned_issues
 from app.web import age_days, brief_as_text, brief_with_prompt, create_app, github_project_url, in_statistics_week, latest_releases, published_releases, release_timeline, release_window_start, statistics_week_bounds, workflow_readable
 
@@ -112,6 +112,35 @@ def test_pr_review_ci_and_age_states():
     assert ci_state({"check_runs": [{"status": "completed", "conclusion": "success"}]}, {"statuses": []}) == "Passing"
     assert ci_state({"check_runs": []}, {"statuses": []}) == "Unknown"
     assert age_days(datetime.now(timezone.utc) - timedelta(days=6, hours=1)) == 6
+
+
+def test_attention_uses_current_issue_state_after_sync_without_app_restart(tmp_path):
+    config = tmp_path / "config.yml"
+    config.write_text("repositories:\n  - name: One\n    url: /acme/one\n", encoding="utf-8")
+    database = tmp_path / "attention.sqlite"
+    app = create_app(config_path=config, database_path=database, auto_sync=False)
+    first_sync = datetime(2026, 9, 30, 12, tzinfo=timezone.utc)
+    next_sync = first_sync + timedelta(minutes=5)
+    with make_session(database)() as session:
+        session.add(Issue(github_id=1, repository_name="One", number=1,
+            title="Needs a fix", url="https://github.com/acme/one/issues/1",
+            state="open", created_at=first_sync, updated_at=first_sync,
+            priority="High", priority_state="known"))
+        session.add(SyncMeta(key="last_success", value=first_sync.isoformat()))
+        session.commit()
+    with app.test_client() as client:
+        page = client.get("/").get_data(as_text=True)
+        assert "Needs a fix" in page and "High priority" in page
+        assert f'data-last-success="{first_sync.isoformat()}"' in page
+        with make_session(database)() as session:
+            session.get(Issue, 1).state = "closed"
+            session.get(SyncMeta, "last_success").value = next_sync.isoformat()
+            session.commit()
+        refreshed = client.get("/").get_data(as_text=True)
+        attention = refreshed.split('id="needs-heading"', 1)[1].split("</section>", 1)[0]
+        assert "Needs a fix" not in attention
+        assert f'data-last-success="{next_sync.isoformat()}"' in refreshed
+        assert client.get("/sync/status").get_json()["last_success"] == next_sync.isoformat()
 
 
 def test_statistics_week_uses_berlin_boundaries_and_iso_week_year():

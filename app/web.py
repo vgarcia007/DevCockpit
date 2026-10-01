@@ -298,7 +298,9 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
                 warnings.setdefault(repo.error, []).append(repo.name)
         with sessions() as session:
             avatars = {user.login: user.url for user in session.scalars(select(UserAvatar)).all()}
+            otrs_state = session.get(OTRSSyncState, "tickets") if otrs_manager else None
         return {"repositories": repos, "last_sync": datetime.fromisoformat(meta.value) if meta else None,
+                "otrs_last_success": otrs_state.last_success if otrs_state else None,
                 "sync_running": manager.running, "github_user": cfg.get("github", {}).get("username", ""),
                 "otrs_enabled": otrs_manager is not None,
                 "avatars": avatars,
@@ -730,10 +732,13 @@ def create_app(config_path=None, database_path=None, auto_sync=True):
     def sync_status():
         with sessions() as session:
             meta = session.get(SyncMeta, "last_success")
+            otrs_state = session.get(OTRSSyncState, "tickets") if otrs_manager else None
             errors = [{"repository": r.name, "error": r.error} for r in session.scalars(select(Repository)).all() if r.error]
         return jsonify({**manager.status(), "otrs_running": otrs_manager.running if otrs_manager else False,
                         "server_time": datetime.now(timezone.utc).isoformat(),
-                        "last_success": meta.value if meta else None, "errors": errors})
+                        "last_success": meta.value if meta else None,
+                        "otrs_last_success": otrs_state.last_success.isoformat() if otrs_state and otrs_state.last_success else None,
+                        "errors": errors})
 
     @app.get("/notifications")
     def notifications():
