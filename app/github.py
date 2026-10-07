@@ -4,6 +4,7 @@ import re
 import subprocess
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from urllib.parse import parse_qsl, urlsplit
 from sqlalchemy import delete
 from .models import ApiCache
 
@@ -110,11 +111,11 @@ class GitHubCliClient:
             raise GitHubError(message, status)
         return status, headers, body
 
-    def _rest_page(self, path, params=None):
+    def _rest_page(self, path, params=None, *, cache=True):
         params = {key: value for key, value in (params or {}).items() if value is not None}
         cache_key = None
         cached = None
-        if self.cache_sessions and self.cache_identity:
+        if cache and self.cache_sessions and self.cache_identity:
             cache_key = json.dumps([os.getenv("GH_HOST", "github.com"), self.cache_identity, API_VERSION,
                                     path.lstrip("/"), sorted(params.items())], separators=(",", ":"))
             with self.cache_sessions() as session:
@@ -175,6 +176,27 @@ class GitHubCliClient:
             if not link or not re.search(r'<[^>]+>;\s*rel="next"', link):
                 break
             page += 1
+
+    def security_pages(self, path):
+        """Follow server pagination; never cache raw security response bodies."""
+        params = {"per_page": 100}
+        seen = set()
+        while True:
+            key = (path, tuple(sorted(params.items())))
+            if key in seen:
+                raise GitHubError("Repeated security pagination cursor")
+            seen.add(key)
+            result, link = self._rest_page(path, params, cache=False)
+            if not isinstance(result, list):
+                raise GitHubError("Unexpected GitHub security response")
+            yield from result
+            match = re.search(r'<([^>]+)>;\s*rel="next"', link or "")
+            if not match:
+                return
+            next_url = urlsplit(match[1])
+            if next_url.path.rstrip("/") != path.split("?", 1)[0].rstrip("/"):
+                raise GitHubError("Unexpected security pagination path")
+            params = dict(parse_qsl(next_url.query))
 
     def graphql(self, query, variables):
         _, headers, output = self._request(["gh", "api", "graphql", "--input", "-", "-i"],

@@ -22,6 +22,7 @@ if (syncLabel) {
   const renderedGitHubSync = syncLabel.dataset.lastSuccess || '';
   const renderedOtrsSync = syncLabel.dataset.otrsLastSuccess || '';
   const renderedZabbixRevision = syncLabel.dataset.zabbixRevision || '';
+  const renderedSecurityRevision = syncLabel.dataset.securityRevision || '';
   let sources = JSON.parse(document.getElementById('sync-sources-data').textContent);
   const rows = new Map([...document.querySelectorAll('[data-sync-source]')].map(row => [row.dataset.syncSource, row]));
   let syncWasRunning = false;
@@ -68,6 +69,7 @@ if (syncLabel) {
       if ((data.last_success || '') !== renderedGitHubSync ||
           (data.otrs_last_success || '') !== renderedOtrsSync ||
           (data.zabbix_revision || '') !== renderedZabbixRevision ||
+          (data.security_revision || '') !== renderedSecurityRevision ||
           (syncWasRunning && !data.running)) {
         updateNotice.hidden = false;
       }

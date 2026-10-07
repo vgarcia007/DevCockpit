@@ -4,6 +4,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import delete, select
 from .changes import detect_changes
+from .security import sync_security
 from .github import GitHubCliClient, GitHubError, RateLimitError, project_items, related_issues
 from .models import ExternalTeamIssue, ExternalTeamSync, Issue, ObservedChange, Pull, Release, Repository, SyncMeta, UserAvatar
 
@@ -308,6 +309,8 @@ class SyncManager:
                                 session.add(row)
                             row.error = str(exc)
                             session.commit()
+                for repo in self.config["repositories"]:
+                    sync_security(self.sessions, client, repo)
                 self.rebuild_links()
                 self.sync_team_issues(client)
                 self._clear_rate_limit()

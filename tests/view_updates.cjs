@@ -49,7 +49,7 @@ function environment(saved, href=url, blocked=false) {
   const state=environment();
   await state.poll();
   assert.equal(state.notice.hidden,true);
-  for(const key of ['last_success','otrs_last_success','zabbix_revision']) {
+  for(const key of ['last_success','otrs_last_success','zabbix_revision','security_revision']) {
     state.data[key]='new revision';
     await state.poll();
     assert.equal(state.notice.hidden,false);

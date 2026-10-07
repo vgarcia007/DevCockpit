@@ -16,6 +16,8 @@ from .config import ROOT, load_config
 from .models import ExternalTeamIssue, ExternalTeamSync, Issue, ObservedChange, OTRSObservedChange, OTRSSyncState, OTRSTicket, OTRSTicketStat, Pull, Release, Repository, SyncMeta, UserAvatar, make_session
 from .otrs import OTRSSyncManager, OTRSClient, OTRSError
 from .sync import SyncManager
+from .security import SOURCES as SECURITY_SOURCES, SEVERITIES as SECURITY_SEVERITIES
+from .models import SecurityAlert
 from .models import ZabbixHost, ZabbixProblem, ZabbixSyncState
 from .zabbix import SEVERITIES, ZabbixSyncManager, ZabbixClient, ZabbixError, host_url, problem_duration, problem_url
 from .accounts import AccountStore, AccountError, account_binding
@@ -478,6 +480,7 @@ def create_app(config_path=None, database_path=None, auto_sync=True, credential_
             avatars = {user.login: user.url for user in session.scalars(select(UserAvatar)).all()}
             otrs_state = session.get(OTRSSyncState, "tickets") if otrs_manager else None
             zabbix_state = session.get(ZabbixSyncState, "monitoring") if zabbix_manager else None
+            security_revision = session.get(SyncMeta, "security_revision")
         return {"repositories": repos, "last_sync": datetime.fromisoformat(meta.value) if meta else None,
                 "sync_sources": sync_sources(meta, otrs_state, zabbix_state,
                     [{"repository": repo.name, "error": repo.error} for repo in repos if repo.error]),
@@ -489,6 +492,7 @@ def create_app(config_path=None, database_path=None, auto_sync=True, credential_
                 "otrs_sync_error": otrs_state.error if otrs_state else None,
                 "zabbix_enabled": zabbix_enabled, "zabbix_state": zabbix_state,
                 "zabbix_revision": zabbix_state.last_attempt.isoformat() if zabbix_state and zabbix_state.last_attempt else "",
+                "security_revision": security_revision.value if security_revision else "",
                 "sync_running": manager.running, "github_user": cfg.get("github", {}).get("username", ""),
                 "otrs_enabled": otrs_manager is not None,
                 "avatars": avatars,
@@ -745,6 +749,33 @@ def create_app(config_path=None, database_path=None, auto_sync=True, credential_
         else:
             rows = sorted(rows, key=lambda i: getattr(i, "created_at" if sort == "created" else "updated_at"), reverse=True)
         return render_template("issues.html", **common(repos, meta), issues=rows, cfg=cfg)
+
+    @app.get("/vulnerabilities")
+    def vulnerabilities_page():
+        with sessions() as session:
+            repos = session.scalars(select(Repository)).all()
+            meta = session.get(SyncMeta, "last_success")
+            alerts = session.scalars(select(SecurityAlert).where(SecurityAlert.repository_name.in_(configured))).all()
+        filters = {key: request.args.get(key, "open" if key == "state" else "").strip()
+                   for key in ("repo", "type", "state", "severity", "q", "sort")}
+        rows = filter_repo(alerts)
+        for param, attr in (("type", "source"), ("state", "status_group"), ("severity", "severity")):
+            if filters[param]:
+                rows = [row for row in rows if getattr(row, attr) == filters[param]]
+        if filters["q"]:
+            query = filters["q"].casefold()
+            rows = [row for row in rows if query in " ".join(str(v or "") for v in
+                    (row.repository_name, row.number, row.title, row.location, row.identifiers)).casefold()]
+        def epoch(value):
+            return value.replace(tzinfo=timezone.utc).timestamp() if value else 0
+        sort = filters["sort"]
+        rows.sort(key=lambda row: (row.repository_name.casefold(), row.source, row.number))
+        if sort in ("updated", "created"):
+            rows.sort(key=lambda row: epoch(getattr(row, sort + "_at")), reverse=True)
+        else:
+            rows.sort(key=lambda row: (SECURITY_SEVERITIES.index(row.severity), -epoch(row.updated_at)))
+        return render_template("vulnerabilities.html", **common(repos, meta), alerts=rows,
+                               filters=filters, sources=SECURITY_SOURCES, severities=SECURITY_SEVERITIES)
 
     @app.get("/tickets")
     def tickets_page():
@@ -1103,6 +1134,7 @@ def create_app(config_path=None, database_path=None, auto_sync=True, credential_
             meta = session.get(SyncMeta, "last_success")
             otrs_state = session.get(OTRSSyncState, "tickets") if otrs_manager else None
             zabbix_state = session.get(ZabbixSyncState, "monitoring") if zabbix_manager else None
+            security_revision = session.get(SyncMeta, "security_revision")
             errors = [{"repository": r.name, "error": r.error} for r in session.scalars(select(Repository)).all() if r.error]
         return jsonify({**manager.status(), "otrs_running": otrs_manager.running if otrs_manager else False,
                         "sources": sync_sources(meta, otrs_state, zabbix_state, errors),
@@ -1110,6 +1142,7 @@ def create_app(config_path=None, database_path=None, auto_sync=True, credential_
                         "last_success": meta.value if meta else None,
                         "otrs_last_success": otrs_state.last_success.isoformat() if otrs_state and otrs_state.last_success else None,
                         "zabbix_revision": zabbix_state.last_attempt.isoformat() if zabbix_state and zabbix_state.last_attempt else "",
+                "security_revision": security_revision.value if security_revision else "",
                         "zabbix_running": zabbix_manager.running if zabbix_manager else False,
                         "errors": errors})
 

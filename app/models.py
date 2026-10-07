@@ -23,6 +23,34 @@ class Repository(Base):
     issues: Mapped[list["Issue"]] = relationship(back_populates="repository", cascade="all, delete-orphan")
     pulls: Mapped[list["Pull"]] = relationship(back_populates="repository", cascade="all, delete-orphan")
     releases: Mapped[list["Release"]] = relationship(back_populates="repository", cascade="all, delete-orphan")
+    security_alerts: Mapped[list["SecurityAlert"]] = relationship(cascade="all, delete-orphan")
+    security_sources: Mapped[list["SecuritySyncState"]] = relationship(cascade="all, delete-orphan")
+
+
+class SecurityAlert(Base):
+    __tablename__ = "security_alerts"
+    repository_name: Mapped[str] = mapped_column(ForeignKey("repositories.name"), primary_key=True)
+    source: Mapped[str] = mapped_column(String, primary_key=True)
+    number: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(Text)
+    url: Mapped[str] = mapped_column(String)
+    severity: Mapped[str] = mapped_column(String, default="unknown")
+    state: Mapped[str] = mapped_column(String)
+    status_group: Mapped[str] = mapped_column(String, index=True)
+    location: Mapped[str | None] = mapped_column(Text)
+    identifiers: Mapped[str | None] = mapped_column(Text)
+    fix_version: Mapped[str | None] = mapped_column(String)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class SecuritySyncState(Base):
+    __tablename__ = "security_sync_states"
+    repository_name: Mapped[str] = mapped_column(ForeignKey("repositories.name"), primary_key=True)
+    source: Mapped[str] = mapped_column(String, primary_key=True)
+    last_attempt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_success: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
 
 
 class Issue(Base):

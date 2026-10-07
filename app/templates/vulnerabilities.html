@@ -1,0 +1,18 @@
+{% extends 'base.html' %}
+{% block title %}Vulnerabilities · Dev-Cockpit{% endblock %}
+{% block workbar_title %}Vulnerabilities{% endblock %}
+{% block content %}
+<div class="page-heading"><div><h1 class="page-title">Vulnerabilities <span class="page-count">{{ alerts|length }}</span></h1><p>Dependabot, code scanning and secret scanning across configured repositories.</p></div></div>
+<form data-auto-filter method="get" class="filter-row filter-surface">
+<select name="repo" class="form-select form-select-sm" aria-label="Repository"><option value="">All repositories</option>{% for r in repositories %}<option value="{{ r.name }}" {% if filters.repo == r.name %}selected{% endif %}>{{ r.name }}</option>{% endfor %}</select>
+<select name="type" class="form-select form-select-sm" aria-label="Alert type"><option value="">All alert types</option>{% for value,label in sources.items() %}<option value="{{ value }}" {% if filters.type == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+<select name="state" class="form-select form-select-sm" aria-label="Status">{% for value,label in [('', 'All states'),('open','Open'),('fixed','Fixed / Resolved'),('dismissed','Dismissed')] %}<option value="{{ value }}" {% if filters.state == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+<select name="severity" class="form-select form-select-sm" aria-label="Severity"><option value="">Any severity</option>{% for value in severities %}<option value="{{ value }}" {% if filters.severity == value %}selected{% endif %}>{{ value|capitalize }}</option>{% endfor %}</select>
+<select name="sort" class="form-select form-select-sm" aria-label="Sort">{% for value,label in [('severity','Severity'),('updated','Recently updated'),('created','Created')] %}<option value="{{ value }}" {% if filters.sort == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+<input name="q" class="form-control form-control-sm" placeholder="Search" aria-label="Search security alerts" value="{{ filters.q }}">
+</form>
+<div class="table-responsive panel p-0"><table class="table table-sm table-hover align-middle mb-0"><thead><tr><th>Repository</th><th>Type</th><th>Alert</th><th>Title</th><th>Severity</th><th>Status</th><th>Package / Location</th><th>Fix version</th><th>Created</th><th>Updated</th></tr></thead><tbody>
+{% for a in alerts %}<tr><td><span class="repo-tag">{{ a.repository_name }}</span></td><td>{{ sources[a.source] }}</td><td><a href="{{ a.url }}" target="_blank" rel="noopener noreferrer">#{{ a.number }}</a></td><td class="table-title"><a href="{{ a.url }}" target="_blank" rel="noopener noreferrer" title="{{ a.title }}">{{ a.title }}</a>{% if a.identifiers %}<div class="text-secondary small">{{ a.identifiers }}</div>{% endif %}</td><td><span class="{% if a.severity in ['critical','high'] %}danger-text{% elif a.severity in ['medium','warning'] %}warning-text{% elif a.severity == 'unknown' %}zero-value{% endif %}">{{ a.severity|capitalize }}</span></td><td>{{ a.state }}</td><td>{{ a.location or '—' }}</td><td>{{ a.fix_version or '—' }}</td><td>{{ a.created_at|date }}</td><td>{{ a.updated_at|date }}</td></tr>
+{% else %}<tr><td colspan="10" class="text-secondary">No matching alerts</td></tr>{% endfor %}
+</tbody></table></div>
+{% endblock %}

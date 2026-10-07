@@ -190,3 +190,13 @@ When OTRS is enabled, its configured queues contribute created and closed ticket
 To rebuild the local cache, stop the app, delete `instance/cockpit.sqlite`, and start again. This resets cached data and locally observed change history for all sources; it does not change upstream data or delete saved accounts. Browser visit and notification preferences are separate.
 
 DevCockpit has no user login and listens on localhost by default. Do not expose it without access control. `config.yml` and `instance/` are ignored by Git. Dates use Europe/Berlin. Run the checks with `.venv/bin/python -m pytest -q`.
+
+## Vulnerabilities
+
+Explore → **Vulnerabilities** combines Dependabot, code scanning and secret scanning alerts for every configured repository. It defaults to open alerts. Filter by repository, alert type, status, severity or search text; sort by severity, update time or creation time. Fixed/resolved and dismissed alerts remain available through the status filter. Open the linked GitHub alert to investigate or change its state.
+
+Alerts refresh with the regular GitHub sync. Each repository and source has an independent snapshot: an unavailable source retains its previous data. The Vulnerabilities page hides warning banners, including notices about disabled or inaccessible scanners. Missing sources can therefore make the displayed list incomplete. Click **Show** in **Updates available** to refresh the view.
+
+The active `gh` account needs access to the repositories and security alerts. Fine-grained tokens need read permissions for **Dependabot alerts**, **Code scanning alerts**, and **Secret scanning alerts**; classic-token scopes and repository roles also depend on the source. See the [Dependabot API](https://docs.github.com/en/rest/dependabot/alerts), [code scanning API](https://docs.github.com/en/rest/code-scanning/code-scanning), and [secret scanning API](https://docs.github.com/en/rest/secret-scanning/secret-scanning). Disabled or unlicensed scanning sources may not be accessible.
+
+Secret values and code snippets are not stored or displayed. Security response bodies bypass the raw API cache. Secret scanning has no severity assigned by this page; it displays **Unknown**. Code scanning uses security severity when available and otherwise its rule severity. The page lists one row per GitHub alert; it does not retrieve additional secret locations or code scanning instances.
