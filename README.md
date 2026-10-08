@@ -49,10 +49,28 @@ In your private `config.yml`, set:
 | `repositories[].name` | A unique name shown in DevCockpit. |
 | `github.username` | Your GitHub login for My work and personal filters. |
 | `repositories[].project_number` | The number at the end of a Projects v2 URL, or `null` if this repository has no Project. |
+| `team[].project_number` | Optional user-owned Project number for this member; includes Draft Issues and counts all its tasks for that person. |
 
 If you use Projects, make the `workflow.values` match your Project's **exact** Status option names. Set `priority.source` to `project` for a Project field or `issue_field` for an organization Issue Field, and set `priority.field` to its exact name. Open issues with **Urgent** or **High** appear in Need attention. Add people under `team` to show their work, including assigned issues in other accessible repositories. **My work** can switch to any configured team member. The supplied [`config.example.yml`](config.example.yml) contains these settings with one example repository.
 
 If a Project is unavailable, GitHub may need the `read:project` scope: `gh auth refresh -s read:project`. DevCockpit shows sync errors in the UI.
+
+### Optional personal Projects
+
+Add `project_number` directly to the Project owner's entry under `team` in `config.yml`:
+
+```yaml
+team:
+  - github: your-github-login
+    name: Your Name
+    project_number: 7
+```
+
+For `https://github.com/users/your-github-login/projects/7`, enter `7`. The `github` login on that same entry identifies the owner. Use the number from the URL, not a GraphQL ID such as `PVT_…`. Omit `project_number` or set it to `null` for members without a personal Project. Restart the app with `./start.sh` after changing the configuration.
+
+Personal Projects use the same configured Status options and Priority field as your other Projects. Their issues and Draft Issues appear in Overview, Brief, Now, Team, My work, Issues/Board, Search, and Statistics. Every task counts for the configured member, including drafts without an assignee; Issues has a source filter for personal Projects.
+
+Drafts display **Draft** and link to the GitHub Project. Moving a draft to the configured Done status completes it; moving it out of Done reopens it. Draft priorities always come from the Project field, even with `priority.source: issue_field`. Real issues retain their GitHub open/closed state. If an issue is already tracked through a configured repository, it appears once and its configured repository Project takes precedence for status and priority.
 
 ## Optional OTRS tickets
 

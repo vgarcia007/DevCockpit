@@ -4,12 +4,12 @@
 {% block title %}Briefing · Dev-Cockpit{% endblock %}
 {% block workbar_title %}Briefing{% endblock %}
 {% macro need_row(item, explanation) %}
-<a class="brief-item" href="{{ item.url }}" target="_blank" rel="noopener noreferrer" title="{{ item.title }}"><span class="repo-tag">{{ item.repository_name }}</span><span class="item-number">{{ 'PR ' if item.__class__.__name__ == 'Pull' else '' }}#{{ item.number }}</span><span class="brief-item-title">{{ item.title }}</span><span class="brief-item-context" title="{{ explanation }}">{{ explanation }}</span>{% if item.__class__.__name__ == 'Pull' %}<span class="brief-item-age" title="Opened {{ item.created_at|date }}">{{ item.created_at|age }}d open</span>{% endif %}{{ icon('arrow-up-right') }}</a>
+<a class="brief-item" href="{{ item.url }}" target="_blank" rel="noopener noreferrer" title="{{ item.title }}"><span class="repo-tag">{{ item.repository_name }}</span><span class="item-number">{{ 'PR ' if item.__class__.__name__ == 'Pull' else '' }}{{ item|task_reference }}</span><span class="brief-item-title">{{ item.title }}</span><span class="brief-item-context" title="{{ explanation }}">{{ explanation }}</span>{% if item.__class__.__name__ == 'Pull' %}<span class="brief-item-age" title="Opened {{ item.created_at|date }}">{{ item.created_at|age }}d open</span>{% endif %}{{ icon('arrow-up-right') }}</a>
 {% endmacro %}
 {% macro ticket_need_row(ticket) %}
 <a class="brief-item ticket-need-row" href="{{ otrs_url }}?Action=AgentTicketZoom;TicketNumber={{ ticket.number|urlencode }}" target="_blank" rel="noopener noreferrer" title="{{ ticket.subject }}"><span class="repo-tag">{{ ticket.queue }}</span><span class="item-number">{{ ticket.number }}</span><span class="brief-item-title">{{ ticket.subject }}</span><span class="brief-item-context">{{ ticket.state }} · {{ ticket.priority }}</span>{{ icon('arrow-up-right') }}</a>
 {% endmacro %}
-{% macro person_issue(item) %}<a href="{{ item.url }}" target="_blank" rel="noopener noreferrer" title="{{ item.title }}"><span class="repo-tag">{{ item.repository_name }}</span><span class="item-number">#{{ item.number }}</span><span class="person-issue-title">{{ item.title }}</span></a>{% endmacro %}
+{% macro person_issue(item) %}<a href="{{ item.url }}" target="_blank" rel="noopener noreferrer" title="{{ item.title }}"><span class="repo-tag">{{ item.repository_name }}</span><span class="item-number">{{ item|task_reference }}</span><span class="person-issue-title">{{ item.title }}</span></a>{% endmacro %}
 {% macro person_ticket(ticket) %}<a href="{{ otrs_url }}?Action=AgentTicketZoom;TicketNumber={{ ticket.number|urlencode }}" target="_blank" rel="noopener noreferrer" title="{{ ticket.subject }}"><span class="repo-tag">{{ ticket.queue }}</span><span class="item-number">{{ ticket.number }}</span><span class="person-issue-title">{{ ticket.subject }}</span></a>{% endmacro %}
 {% block content %}
 <div class="briefing-page">

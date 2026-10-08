@@ -45,10 +45,17 @@ Add people under `team` using their GitHub login and display name:
 team:
   - github: example-login
     name: Example Person
+    project_number: 7 # Optional: github.com/users/example-login/projects/7.
     otrs_user: example-agent # Optional; omit when no OTRS mapping is needed.
 ```
 
-Team also shows issues assigned to those people in other repositories visible to your `gh` account. Those repositories do not have to be configured. Their issues stay separate from the configured Project workflow. If this search fails or is incomplete, the person card shows a warning.
+An optional `team[].project_number` reads the member's user-owned Project directly, including Draft Issues. Use the positive number at the end of its URL, not a GraphQL ID; omit it or set `null` to disable it. All its tasks count for that member, even without GitHub assignees. The same workflow mapping applies. Draft priorities always use the Project field; real issues follow `priority.source`.
+
+Personal tasks appear in Overview, Brief and its exports, Now, Team, My work, Issues/Board, Search and Statistics. Issues offers a source filter for personal projects. Drafts display **Draft** and open the GitHub Project. A draft in the configured Done status is completed; moving it out of Done reopens it. Statistics records the first observed transition to Done, not an inferred GitHub closure date. Drafts already Done at first import have no completion date. Archived and removed items disappear from the working views.
+
+Real issues appear once. A configured repository Project takes precedence for workflow and priority; the personal owner is added to the assignment used by work views and filters. Without a repository Project, the personal Project supplies those values. Multiple personal Projects use the first owner's GitHub login alphabetically. Actual GitHub assignees remain unchanged. Failed reads keep cached data and show a warning and the last successful project sync. Restart after configuration changes.
+
+Team also shows issues assigned to those people in other repositories visible to your `gh` account. Those repositories do not have to be configured. Issues already tracked through a personal Project are excluded from this additional list. Remaining search results stay separate from the configured Project workflow. If this search fails or is incomplete, the person card shows a warning.
 
 **My work** (`/work`) opens with `github.username` and can switch to any configured team member. Its first work section highlights assigned open issues in the configured In Progress status (for example, Doing). Below it are all open assigned issues from configured and other accessible repositories, open PRs created by or assigned to the person, requested reviews, and matching OTRS tickets.
 

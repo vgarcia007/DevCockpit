@@ -168,6 +168,25 @@ class ExternalTeamIssue(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class PersonalProject(Base):
+    __tablename__ = "personal_projects"
+    login: Mapped[str] = mapped_column(String, primary_key=True)
+    number: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str | None] = mapped_column(String)
+    last_attempt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_success: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
+    incomplete: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class PersonalProjectItem(Base):
+    __tablename__ = "personal_project_items"
+    login: Mapped[str] = mapped_column(ForeignKey("personal_projects.login"), primary_key=True)
+    item_id: Mapped[str] = mapped_column(String, primary_key=True)
+    payload: Mapped[dict] = mapped_column(JSON)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class ExternalTeamSync(Base):
     __tablename__ = "external_team_sync"
     login: Mapped[str] = mapped_column(String, primary_key=True)

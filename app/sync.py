@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import delete, select
 from .changes import detect_changes
 from .security import sync_security
+from .personal import sync_projects
 from .github import GitHubCliClient, GitHubError, RateLimitError, project_items, related_issues
 from .models import ExternalTeamIssue, ExternalTeamSync, Issue, ObservedChange, Pull, Release, Repository, SyncMeta, UserAvatar
 
@@ -271,6 +272,7 @@ class SyncManager:
 
     def _run(self):
         successes = 0
+        personal_successes = 0
         rate_limited = False
         try:
             with GitHubCliClient(cache_sessions=self.sessions) as client:
@@ -313,6 +315,7 @@ class SyncManager:
                     sync_security(self.sessions, client, repo)
                 self.rebuild_links()
                 self.sync_team_issues(client)
+                personal_successes = sync_projects(self.sessions, client, self.config)
                 self._clear_rate_limit()
                 LOG.info("Sync completed: %s/%s repositories", successes, len(self.config["repositories"]))
         except RateLimitError as exc:
@@ -322,7 +325,7 @@ class SyncManager:
             LOG.exception("Sync interrupted")
         finally:
             try:
-                if successes:
+                if successes or personal_successes:
                     with self.sessions() as session:
                         session.merge(SyncMeta(key="last_success", value=datetime.now(timezone.utc).isoformat()))
                         session.commit()

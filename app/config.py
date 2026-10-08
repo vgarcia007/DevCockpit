@@ -117,6 +117,9 @@ def load_config(path=None):
     unique = {}
     otrs_owners = set()
     for person in data.get("team", []):
+        project_number = person.get("project_number")
+        if project_number is not None and (not isinstance(project_number, int) or isinstance(project_number, bool) or project_number <= 0):
+            raise ValueError("team.project_number must be a positive integer or null")
         owner = person.get("otrs_user")
         if owner is not None:
             if not isinstance(owner, str) or not owner.strip():

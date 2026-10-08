@@ -25,9 +25,15 @@ priority:
   field: Priority
 
 # Optional: people shown in Team and Brief.
+# Put a personal Project number on its owner's team entry, not under repositories.
 team:
   - github: your-github-login
     name: Your Name
+    project_number: null # Optional: replace null with 7 for https://github.com/users/your-github-login/projects/7.
+    # The github login above is the Project owner; use the URL number, not a PVT_... ID.
+    # Omit project_number or leave it null if this person has no personal Project.
+    # All tasks, including drafts without assignees, count for this team member.
+    # Uses the workflow and priority fields configured above; drafts in Done count as completed.
     # otrs_user: your-otrs-login # Matches OTRS owner or responsible agent.
 
 sync:

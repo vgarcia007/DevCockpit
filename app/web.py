@@ -8,6 +8,7 @@ from calendar import month_abbr, monthrange
 from datetime import datetime, timedelta, timezone
 from math import ceil
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import quote, urlsplit
 from zoneinfo import ZoneInfo
 from flask import Flask, abort, redirect, render_template, request, url_for, jsonify, session as browser_session
@@ -16,6 +17,7 @@ from .config import ROOT, load_config
 from .models import ExternalTeamIssue, ExternalTeamSync, Issue, ObservedChange, OTRSObservedChange, OTRSSyncState, OTRSTicket, OTRSTicketStat, Pull, Release, Repository, SyncMeta, UserAvatar, make_session
 from .otrs import OTRSSyncManager, OTRSClient, OTRSError
 from .sync import SyncManager
+from .personal import project_states, work_items, personal_url
 from .security import SOURCES as SECURITY_SOURCES, SEVERITIES as SECURITY_SEVERITIES
 from .models import SecurityAlert
 from .models import ZabbixHost, ZabbixProblem, ZabbixSyncState
@@ -25,6 +27,10 @@ from .accounts import AccountStore, AccountError, account_binding
 LOG = logging.getLogger(__name__)
 PRIORITIES = ["Urgent", "High", "Medium", "Low"]
 LOCAL_TZ = ZoneInfo("Europe/Berlin")
+
+
+def task_reference(item):
+    return "Draft" if getattr(item, "is_draft", False) else f"#{item.number}"
 
 
 def age_days(value):
@@ -66,7 +72,7 @@ def brief_as_text(attention, team, reviews, ready, shipped, cards, last_sync, at
 
     def item_label(item):
         kind = "PR " if isinstance(item, Pull) else ""
-        return f"{cell(item.repository_name)} {kind}#{item.number} | {cell(item.title)}"
+        return f"{cell(item.repository_name)} {kind}{task_reference(item)} | {cell(item.title)}"
 
     def section(label, total, shown):
         return f"{label} ({total} total, {shown} shown)"
@@ -233,6 +239,12 @@ def wiki_as_markdown(repos, issues, releases, backlog_status, last_sync, now=Non
                     lines.append(f"- {link(release.tag, release.url)} · {fmt_date(release.published_at)}{suffix}")
         if not populated:
             lines.extend(["", "Keine passenden GitHub-Einträge im vorhandenen Datenbestand."])
+    personal = [issue for issue in issues if getattr(issue, "source", "repository").startswith("personal:")]
+    if personal:
+        lines.extend(["", "### Persönliche Projektaufgaben", ""])
+        for issue in sorted(personal, key=lambda item: (item.repository_name, item.title)):
+            suffix = f" · Abschluss beobachtet: {fmt_date(issue.closed_at)}" if getattr(issue, "is_draft", False) and issue.closed_at else ""
+            lines.append(f"- [{'x' if issue.state == 'closed' else ' '}] {md(issue.repository_name)} · {link(issue.title, issue.url)} · {md(workflow_label(issue))}{suffix}")
     return "\n".join(lines).strip() + "\n"
 
 
@@ -370,6 +382,7 @@ def create_app(config_path=None, database_path=None, auto_sync=True, credential_
             clear_account_cache(provider, binding)
         return account
     configured = {repo["name"] for repo in cfg["repositories"]}
+    activity_sources = configured | {f"personal:{p['github'].lower()}" for p in cfg["team"] if p.get("project_number") is not None}
     configured_repositories = {repo["name"]: repo for repo in cfg["repositories"]}
     with sessions() as session:
         if not otrs_enabled:
@@ -410,14 +423,22 @@ def create_app(config_path=None, database_path=None, auto_sync=True, credential_
     app.jinja_env.filters["open_days"] = open_days
     app.jinja_env.filters["priority"] = priority_label
     app.jinja_env.filters["workflow"] = workflow_label
+    app.jinja_env.filters["task_reference"] = task_reference
     app.jinja_env.filters["monitoring_duration"] = problem_duration
 
     def snapshot():
         with sessions() as session:
+            repos = session.scalars(select(Repository)).all()
+            issues = work_items(session, session.scalars(select(Issue)).all(), repos, cfg)
+            pulls = session.scalars(select(Pull)).all()
+            for issue in issues:
+                if issue.source.startswith("personal:") and not issue.is_draft:
+                    issue.related_pulls = [{"number": pull.number, "url": pull.url, "state": pull.state,
+                        "repository": pull.repository_name} for pull in pulls if any(
+                        ref["repository"].casefold() == issue.full_name.casefold() and ref["number"] == issue.number
+                        for ref in pull.related_issues)]
             return (
-                session.scalars(select(Repository)).all(),
-                session.scalars(select(Issue)).all(),
-                session.scalars(select(Pull)).all(),
+                repos, issues, pulls,
                 session.scalars(select(Release)).all(),
                 session.get(SyncMeta, "last_success"),
             )
@@ -426,11 +447,14 @@ def create_app(config_path=None, database_path=None, auto_sync=True, credential_
         return issue.workflow_state == "known" and issue.workflow == cfg["workflow"]["values"].get(key)
 
     def ordered_issues(items):
-        return sorted(items, key=lambda i: (PRIORITIES.index(i.priority) if i.priority in PRIORITIES else 4, i.repository_name.lower(), i.number))
+        return sorted(items, key=lambda i: (PRIORITIES.index(i.priority) if i.priority in PRIORITIES else 4, i.repository_name.lower(), i.number or 0, i.title))
 
     def filter_repo(items):
         repo = request.args.get("repo", "")
-        return [i for i in items if not repo or i.repository_name == repo]
+        source = request.args.get("source", "")
+        return [i for i in items if (not repo or i.repository_name == repo) and
+                (not source or source == getattr(i, "source", "repository") or
+                 source.removeprefix("personal:") in getattr(i, "personal_owners", []) and source.startswith("personal:"))]
 
     def sync_sources(meta, otrs_state, zabbix_state, errors):
         def timestamp(value):
@@ -477,13 +501,23 @@ def create_app(config_path=None, database_path=None, auto_sync=True, credential_
             if repo.error:
                 warnings.setdefault(repo.error, []).append(repo.name)
         with sessions() as session:
+            personal_states = project_states(session, cfg)
+            for state in personal_states:
+                if state.error or state.incomplete:
+                    warnings.setdefault(state.error or "Some personal project items are inaccessible", []).append(f"Personal · {state.login}")
             avatars = {user.login: user.url for user in session.scalars(select(UserAvatar)).all()}
             otrs_state = session.get(OTRSSyncState, "tickets") if otrs_manager else None
             zabbix_state = session.get(ZabbixSyncState, "monitoring") if zabbix_manager else None
             security_revision = session.get(SyncMeta, "security_revision")
         return {"repositories": repos, "last_sync": datetime.fromisoformat(meta.value) if meta else None,
                 "sync_sources": sync_sources(meta, otrs_state, zabbix_state,
-                    [{"repository": repo.name, "error": repo.error} for repo in repos if repo.error]),
+                    [{"repository": repo.name, "error": repo.error} for repo in repos if repo.error] +
+                    [{"repository": f"Personal · {state.login}", "error": state.error or "Some project items are inaccessible"}
+                     for state in personal_states if state.error or state.incomplete]),
+                "personal_projects": [{"login": person["github"].lower(), "name": person.get("name", person["github"]),
+                    "url": personal_url(person["github"], person["project_number"]),
+                    "state": next((state for state in personal_states if state.login == person["github"].lower()), None)}
+                    for person in cfg["team"] if person.get("project_number") is not None],
                 "sync_server_time": datetime.now(timezone.utc).isoformat(),
                 "account_notices": [{"name": provider.upper() if provider == "otrs" else "Zabbix",
                     "error": sync_manager.account_error} for provider, sync_manager in integration_managers.items()
@@ -508,6 +542,7 @@ def create_app(config_path=None, database_path=None, auto_sync=True, credential_
             tickets = session.scalars(select(OTRSTicket).order_by(
                 OTRSTicket.created_at.desc(), OTRSTicket.number.desc())).all() if otrs_manager else []
         configured_full_names = {repo["full_name"].lower() for repo in cfg["repositories"]}
+        tracked = {getattr(issue, "identity", "") for issue in issues}
         for person in sorted(cfg["team"], key=team_sort_key):
             user = person["github"].lower()
             assigned = [i for i in issues if i.state == "open" and user in [a.lower() for a in i.assignees]]
@@ -519,7 +554,8 @@ def create_app(config_path=None, database_path=None, auto_sync=True, credential_
                            "next": [i for i in assigned if status(i, "ready") or status(i, "backlog")],
                            "prs": [p for p in pulls if p.state == "open" and (p.author or "").lower() == user],
                            "tickets": [ticket for ticket in tickets if otrs_user_matches(ticket, person.get("otrs_user"))],
-                           "external": [i for i in outside if i.login == user and i.repository_name.lower() not in configured_full_names],
+                           "external": [i for i in outside if i.login == user and i.repository_name.lower() not in configured_full_names
+                                        and f"{i.repository_name.lower()}#{i.number}" not in tracked],
                            "external_sync": outside_state.get(user)})
         return result
 
@@ -559,7 +595,7 @@ def create_app(config_path=None, database_path=None, auto_sync=True, credential_
         for i in issues:
             if i.state == "open" and i.priority_state == "known" and i.priority == "Urgent":
                 result.append(("URGENT", i, "Open issue with GitHub priority Urgent"))
-            if i.state == "open" and status(i, "done"):
+            if i.state == "open" and status(i, "done") and not getattr(i, "is_draft", False):
                 result.append(("WORKFLOW", i, "Project status Done, but GitHub issue is open"))
         for p in pulls:
             if p.state != "open":
@@ -616,7 +652,7 @@ def create_app(config_path=None, database_path=None, auto_sync=True, credential_
         counts["Unavailable"] = sum(priority_label(i) == "Unavailable" for i in ready)
         with sessions() as session:
             observed = session.scalars(select(ObservedChange).where(
-                ObservedChange.repository_name.in_(configured),
+                ObservedChange.repository_name.in_(activity_sources),
                 ObservedChange.observed_at >= datetime.now(timezone.utc) - timedelta(days=30),
             ).order_by(ObservedChange.observed_at.desc(), ObservedChange.id.desc())).all()
             changes = [{"event": event, "observed_ms": int(event.observed_at.replace(tzinfo=timezone.utc).timestamp() * 1000)}
@@ -674,6 +710,12 @@ def create_app(config_path=None, database_path=None, auto_sync=True, credential_
         sections = [{"repo": repo, "issues": sorted(
             (issue for issue in active if issue.repository_name == repo.name),
             key=lambda issue: issue.updated_at, reverse=True)} for repo in repos]
+        for person in cfg["team"]:
+            if person.get("project_number") is not None:
+                source = f"personal:{person['github'].lower()}"
+                sections.append({"repo": SimpleNamespace(name=f"Personal · {person.get('name', person['github'])}",
+                    full_name=person["github"], url=personal_url(person["github"], person["project_number"])),
+                    "issues": sorted((issue for issue in active if issue.source == source), key=lambda issue: issue.updated_at, reverse=True)})
         return render_template("now.html", **common(repos, meta),
             sections=[section for section in sections if section["issues"]], active_count=len(active),
             otrs_people=[entry for entry in team_data(issues, []) if entry["tickets"]] if otrs_manager else [],
@@ -717,7 +759,9 @@ def create_app(config_path=None, database_path=None, auto_sync=True, credential_
                 if otrs_user_matches(ticket, owner)] if otrs_manager and owner else []
             otrs_state = session.get(OTRSSyncState, "tickets") if otrs_manager else None
         configured_full_names = {repo["full_name"].casefold() for repo in cfg["repositories"]}
-        external = [issue for issue in external if issue.repository_name.casefold() not in configured_full_names]
+        tracked = {issue.identity for issue in issues}
+        external = [issue for issue in external if issue.repository_name.casefold() not in configured_full_names
+                    and f"{issue.repository_name.casefold()}#{issue.number}" not in tracked]
         return render_template("work.html", **common(repos, meta), person=person,
                                people=sorted(people.values(), key=team_sort_key), own_login=own_login,
                                issues=assigned,
@@ -874,6 +918,7 @@ def create_app(config_path=None, database_path=None, auto_sync=True, credential_
         scope = "all" if request.args.get("scope") == "all" else "projects"
         selected_repositories = (configured if scope == "all" else
             {name for name, repo in configured_repositories.items() if repo.get("project_number") is not None})
+        personal = [item for item in issues if item.source.startswith("personal:")]
         issues = [item for item in issues if item.repository_name in selected_repositories]
         pulls = [item for item in pulls if item.repository_name in selected_repositories]
         releases = [item for item in releases if item.repository_name in selected_repositories]
@@ -904,6 +949,8 @@ def create_app(config_path=None, database_path=None, auto_sync=True, credential_
             previous_week_url=url_for("statistics_page", week=previous_week, **scope_args),
             next_week_url=url_for("statistics_page", week=next_week, **scope_args) if next_week else None,
             issue_created=issue_created, issue_closed=issue_closed,
+            personal_created=weekly(personal, "created_at"),
+            personal_closed=weekly((item for item in personal if item.state == "closed"), "closed_at"),
             pull_merged=pull_merged, released=released, ticket_created=ticket_created,
             ticket_closed=ticket_closed, otrs_sync=otrs_sync, undated_closed=undated_closed,
             otrs_url=otrs_config["url"].rstrip("/") + "/index.pl" if otrs_manager else None)
@@ -949,6 +996,8 @@ def create_app(config_path=None, database_path=None, auto_sync=True, credential_
         filters = {}
         if request.args.get("repo"):
             filters["repo"] = request.args["repo"]
+        if request.args.get("source"):
+            filters["source"] = request.args["source"]
         person = request.args.get("person", "")
         if person.casefold() == "~unassigned":
             filters["unassigned"] = "1"
@@ -1136,6 +1185,8 @@ def create_app(config_path=None, database_path=None, auto_sync=True, credential_
             zabbix_state = session.get(ZabbixSyncState, "monitoring") if zabbix_manager else None
             security_revision = session.get(SyncMeta, "security_revision")
             errors = [{"repository": r.name, "error": r.error} for r in session.scalars(select(Repository)).all() if r.error]
+            errors.extend({"repository": f"Personal · {state.login}", "error": state.error or "Some project items are inaccessible"}
+                          for state in project_states(session, cfg) if state.error or state.incomplete)
         return jsonify({**manager.status(), "otrs_running": otrs_manager.running if otrs_manager else False,
                         "sources": sync_sources(meta, otrs_state, zabbix_state, errors),
                         "server_time": datetime.now(timezone.utc).isoformat(),
@@ -1167,7 +1218,7 @@ def create_app(config_path=None, database_path=None, auto_sync=True, credential_
         if before and (source not in ("g", "o") or not identifier.isdecimal() or int(identifier) < 1):
             abort(400)
         as_of = datetime.now(timezone.utc)
-        github_filters = (ObservedChange.repository_name.in_(configured),
+        github_filters = (ObservedChange.repository_name.in_(activity_sources),
                           ObservedChange.observed_at >= as_of - timedelta(days=30),
                           ObservedChange.observed_at <= as_of)
         otrs_filters = (OTRSObservedChange.queue_id.in_(otrs_config["attention_queue_ids"]),
