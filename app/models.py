@@ -172,6 +172,8 @@ class PersonalProject(Base):
     __tablename__ = "personal_projects"
     login: Mapped[str] = mapped_column(String, primary_key=True)
     number: Mapped[int] = mapped_column(Integer)
+    owner: Mapped[str | None] = mapped_column(String)
+    owner_type: Mapped[str | None] = mapped_column(String)
     title: Mapped[str | None] = mapped_column(String)
     last_attempt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_success: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -278,6 +280,10 @@ def make_session(database_path):
     engine = create_engine(f"sqlite:///{database_path}", connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     with engine.begin() as connection:
+        personal_columns = {column["name"] for column in inspect(connection).get_columns("personal_projects")}
+        for column in ("owner", "owner_type"):
+            if column not in personal_columns:
+                connection.execute(text(f"ALTER TABLE personal_projects ADD COLUMN {column} VARCHAR"))
         if "resolved_at" not in {column["name"] for column in inspect(connection).get_columns("zabbix_problems")}:
             connection.execute(text("ALTER TABLE zabbix_problems ADD COLUMN resolved_at DATETIME"))
         if "body" not in {column["name"] for column in inspect(connection).get_columns("releases")}:

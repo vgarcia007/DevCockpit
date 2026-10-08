@@ -120,6 +120,16 @@ def load_config(path=None):
         project_number = person.get("project_number")
         if project_number is not None and (not isinstance(project_number, int) or isinstance(project_number, bool) or project_number <= 0):
             raise ValueError("team.project_number must be a positive integer or null")
+        project_owner = person.get("project_owner")
+        if project_owner is not None:
+            if not isinstance(project_owner, str) or not project_owner.strip():
+                raise ValueError("team.project_owner must be a non-empty string")
+            person["project_owner"] = project_owner.strip()
+        owner_type = person.get("project_owner_type", "user")
+        if owner_type not in ("user", "organization"):
+            raise ValueError("team.project_owner_type must be user or organization")
+        if project_number is not None and owner_type == "organization" and not (project_owner or data.get("github", {}).get("organization")):
+            raise ValueError("Organization team projects need project_owner or github.organization")
         owner = person.get("otrs_user")
         if owner is not None:
             if not isinstance(owner, str) or not owner.strip():

@@ -1,5 +1,6 @@
 from copy import deepcopy
 from datetime import datetime, timezone
+import sqlite3
 
 import pytest
 import yaml
@@ -8,7 +9,7 @@ from sqlalchemy import select
 from app.config import load_config
 from app.github import GitHubError, RateLimitError
 from app.models import ExternalTeamIssue, Issue, ObservedChange, PersonalProject, PersonalProjectItem, Repository, make_session
-from app.personal import fetch_project, sync_projects, work_items
+from app.personal import fetch_project, sync_projects, work_items, person_project_url, project_states
 from app.web import create_app
 
 
@@ -37,17 +38,20 @@ class Client:
         self.fields = ["Status", "Priority"]
         self.error = None
         self.paginate = False
+        self.owner = "alice"
+        self.owner_type = "user"
 
     def graphql(self, query, variables):
         if self.error:
             raise self.error
-        assert variables["owner"] == "alice"
+        assert variables["owner"] == self.owner
+        assert f"{self.owner_type}(login:$owner)" in query
         if "fields(first:100" in query:
-            return {"user": {"projectV2": {"fields": {"nodes": [{"name": name} for name in self.fields],
+            return {self.owner_type: {"projectV2": {"fields": {"nodes": [{"name": name} for name in self.fields],
                 "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}
         first = self.paginate and variables["cursor"] is None
         items = self.items[:1] if first else self.items[1:] if self.paginate else self.items
-        return {"user": {"projectV2": {"title": "My tasks", "items": {"nodes": deepcopy(items),
+        return {self.owner_type: {"projectV2": {"title": "My tasks", "items": {"nodes": deepcopy(items),
             "pageInfo": {"hasNextPage": first, "endCursor": "next" if first else None}}}}}
 
 
@@ -248,3 +252,74 @@ def test_real_issue_field_and_external_search_deduplication(tmp_path):
         assert "Other assigned issues <span>1</span>" not in page
     assert "Personal task" in browser.get("/issues?priority=High").get_data(as_text=True)
     assert "Personal task" not in browser.get("/issues?priority=Urgent").get_data(as_text=True)
+
+
+@pytest.mark.parametrize("key,value", [("project_owner", " "), ("project_owner", 42),
+    ("project_owner_type", "org"), ("project_owner_type", None)])
+def test_invalid_project_owner_settings(tmp_path, key, value):
+    cfg = deepcopy(CFG)
+    cfg["team"][0][key] = value
+    path = tmp_path / "config.yml"
+    path.write_text(yaml.safe_dump(cfg))
+    with pytest.raises(ValueError, match="team.project_owner"):
+        load_config(path)
+
+
+def test_organization_project_reads_owner_but_assigns_member(tmp_path):
+    cfg = deepcopy(CFG)
+    cfg["team"][0].update(project_owner="acme", project_owner_type="organization")
+    path = tmp_path / "config.yml"
+    path.write_text(yaml.safe_dump(cfg))
+    db = tmp_path / "test.sqlite"
+    app = create_app(config_path=path, database_path=db, auto_sync=False)
+    sessions = make_session(db)
+    client = Client([draft(), dict(draft(item_id="PVTI_2"), content=dict(draft()["content"], id="DI_2"))])
+    client.owner, client.owner_type, client.paginate = "acme", "organization", True
+    assert sync_projects(sessions, client, cfg) == 1
+    with sessions() as session:
+        state = session.get(PersonalProject, "alice")
+        assert state.owner == "acme" and state.owner_type == "organization"
+        rows = work_items(session, [], [], cfg)
+        assert len(rows) == 2
+        assert all(row.assignees == ["alice"] and row.url == "https://github.com/orgs/acme/projects/7" for row in rows)
+    browser = app.test_client()
+    for url in ("/issues", "/now", "/team", "/work"):
+        response = browser.get(url)
+        assert response.status_code == 200
+        page = response.get_data(as_text=True)
+        assert "https://github.com/orgs/acme/projects/7" in page
+        assert "https://github.com/users/alice/projects/7" not in page
+    cfg["team"][0].pop("project_owner")
+    assert person_project_url(cfg["team"][0], cfg) == "https://github.com/orgs/acme/projects/7"
+
+
+def test_owner_change_with_same_number_invalidates_cache(tmp_path):
+    sessions = make_session(tmp_path / "test.sqlite")
+    client = Client()
+    sync_projects(sessions, client, CFG)
+    cfg = deepcopy(CFG)
+    cfg["team"][0].update(project_owner="acme", project_owner_type="organization")
+    with sessions() as session:
+        assert project_states(session, cfg) == []
+        assert work_items(session, [], [], cfg) == []
+    client.error = GitHubError("No access")
+    assert sync_projects(sessions, client, cfg) == 0
+    with sessions() as session:
+        state = session.get(PersonalProject, "alice")
+        assert state.last_success is None and state.owner == "acme"
+        assert session.scalars(select(PersonalProjectItem)).all() == []
+    client.error = None
+    client.owner, client.owner_type = "acme", "organization"
+    assert sync_projects(sessions, client, cfg) == 1
+
+
+def test_legacy_project_schema_migrates_without_losing_snapshot(tmp_path):
+    db = tmp_path / "legacy.sqlite"
+    with sqlite3.connect(db) as connection:
+        connection.execute("CREATE TABLE personal_projects (login VARCHAR PRIMARY KEY, number INTEGER, title VARCHAR, last_attempt DATETIME, last_success DATETIME, error TEXT, incomplete BOOLEAN)")
+        connection.execute("INSERT INTO personal_projects (login, number, title, incomplete) VALUES ('alice', 7, 'Legacy tasks', 0)")
+    sessions = make_session(db)
+    with sessions() as session:
+        state = project_states(session, CFG)[0]
+        assert state.title == "Legacy tasks" and state.owner is None and state.owner_type is None
+    make_session(db)  # Migration is idempotent.

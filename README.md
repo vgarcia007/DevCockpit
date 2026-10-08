@@ -49,7 +49,8 @@ In your private `config.yml`, set:
 | `repositories[].name` | A unique name shown in DevCockpit. |
 | `github.username` | Your GitHub login for My work and personal filters. |
 | `repositories[].project_number` | The number at the end of a Projects v2 URL, or `null` if this repository has no Project. |
-| `team[].project_number` | Optional user-owned Project number for this member; includes Draft Issues and counts all its tasks for that person. |
+| `team[].project_number` | Optional Project number for this member; includes Draft Issues and counts all its tasks for that person. |
+| `team[].project_owner` / `project_owner_type` | Optional Project owner and type (`user` or `organization`); defaults to the member's user-owned Project. |
 
 If you use Projects, make the `workflow.values` match your Project's **exact** Status option names. Set `priority.source` to `project` for a Project field or `issue_field` for an organization Issue Field, and set `priority.field` to its exact name. Open issues with **Urgent** or **High** appear in Need attention. Add people under `team` to show their work, including assigned issues in other accessible repositories. **My work** can switch to any configured team member. The supplied [`config.example.yml`](config.example.yml) contains these settings with one example repository.
 
@@ -57,7 +58,7 @@ If a Project is unavailable, GitHub may need the `read:project` scope: `gh auth 
 
 ### Optional personal Projects
 
-Add `project_number` directly to the Project owner's entry under `team` in `config.yml`:
+Add `project_number` directly to the assigned member's entry under `team` in `config.yml`:
 
 ```yaml
 team:
@@ -66,7 +67,18 @@ team:
     project_number: 7
 ```
 
-For `https://github.com/users/your-github-login/projects/7`, enter `7`. The `github` login on that same entry identifies the owner. Use the number from the URL, not a GraphQL ID such as `PVT_…`. Omit `project_number` or set it to `null` for members without a personal Project. Restart the app with `./start.sh` after changing the configuration.
+For `https://github.com/users/your-github-login/projects/7`, enter `7`. The Project owner defaults to the `github` login on that same entry. For an organization-owned Project such as `https://github.com/orgs/komro/projects/36`, set the owner and type on the member's entry too:
+
+```yaml
+team:
+  - github: vgarcia007
+    name: Philipp
+    project_number: 36
+    project_owner: komro
+    project_owner_type: organization
+```
+
+Tasks remain assigned to Philipp in DevCockpit, while the Project is read from `komro`. With `project_owner_type: organization`, an omitted `project_owner` defaults to `github.organization`. To read another user's Project, set `project_owner` to their login and `project_owner_type: user`. Use the number from the URL, not a GraphQL ID such as `PVT_…`. Omit `project_number` or set it to `null` for members without a personal Project. Restart the app with `./start.sh` after changing the configuration.
 
 Personal Projects use the same configured Status options and Priority field as your other Projects. Their issues and Draft Issues appear in Overview, Brief, Now, Team, My work, Issues/Board, Search, and Statistics. Every task counts for the configured member, including drafts without an assignee; Issues has a source filter for personal Projects.
 

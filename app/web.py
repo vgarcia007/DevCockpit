@@ -17,7 +17,7 @@ from .config import ROOT, load_config
 from .models import ExternalTeamIssue, ExternalTeamSync, Issue, ObservedChange, OTRSObservedChange, OTRSSyncState, OTRSTicket, OTRSTicketStat, Pull, Release, Repository, SyncMeta, UserAvatar, make_session
 from .otrs import OTRSSyncManager, OTRSClient, OTRSError
 from .sync import SyncManager
-from .personal import project_states, work_items, personal_url
+from .personal import project_states, work_items, person_project_url
 from .security import SOURCES as SECURITY_SOURCES, SEVERITIES as SECURITY_SEVERITIES
 from .models import SecurityAlert
 from .models import ZabbixHost, ZabbixProblem, ZabbixSyncState
@@ -517,7 +517,7 @@ def create_app(config_path=None, database_path=None, auto_sync=True, credential_
                     [{"repository": f"Personal · {state.login}", "error": state.error or "Some project items are inaccessible"}
                      for state in personal_states if state.error or state.incomplete]),
                 "personal_projects": [{"login": person["github"].lower(), "name": person.get("name", person["github"]),
-                    "url": personal_url(person["github"], person["project_number"]),
+                    "url": person_project_url(person, cfg),
                     "state": next((state for state in personal_states if state.login == person["github"].lower()), None)}
                     for person in cfg["team"] if person.get("project_number") is not None],
                 "sync_server_time": datetime.now(timezone.utc).isoformat(),
@@ -716,7 +716,7 @@ def create_app(config_path=None, database_path=None, auto_sync=True, credential_
             if person.get("project_number") is not None:
                 source = f"personal:{person['github'].lower()}"
                 sections.append({"repo": SimpleNamespace(name=f"Personal · {person.get('name', person['github'])}",
-                    full_name=person["github"], url=personal_url(person["github"], person["project_number"])),
+                    full_name=person["github"], url=person_project_url(person, cfg)),
                     "issues": sorted((issue for issue in active if issue.source == source), key=lambda issue: issue.updated_at, reverse=True)})
         return render_template("now.html", **common(repos, meta),
             sections=[section for section in sections if section["issues"]], active_count=len(active),

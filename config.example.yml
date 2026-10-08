@@ -25,12 +25,17 @@ priority:
   field: Priority
 
 # Optional: people shown in Team and Brief.
-# Put a personal Project number on its owner's team entry, not under repositories.
+# Put a personal Project number on the assigned team member's entry, not under repositories.
 team:
   - github: your-github-login
     name: Your Name
     project_number: null # Optional: replace null with 7 for https://github.com/users/your-github-login/projects/7.
-    # The github login above is the Project owner; use the URL number, not a PVT_... ID.
+    # By default, the github login above is the Project owner (project_owner_type: user).
+    # For https://github.com/orgs/example-org/projects/7, also set:
+    # project_owner: example-org
+    # project_owner_type: organization
+    # For another user's Project, set project_owner to their login and project_owner_type: user.
+    # Use the URL number, not a PVT_... ID; the task assignment stays with this team member.
     # Omit project_number or leave it null if this person has no personal Project.
     # All tasks, including drafts without assignees, count for this team member.
     # Uses the workflow and priority fields configured above; drafts in Done count as completed.

@@ -43,22 +43,45 @@ query($owner:String!, $number:Int!, $cursor:String, $status:String!, $priority:S
 }
 """
 
+ORGANIZATION_PERSONAL_QUERY = PERSONAL_QUERY.replace("user(login:$owner)", "organization(login:$owner)")
+
 
 def as_date(value):
     return datetime.fromisoformat(value.replace("Z", "+00:00")) if value else None
 
 
-def personal_url(login, number):
-    return f"https://github.com/users/{login}/projects/{number}"
+def personal_url(owner, number, owner_type="user"):
+    segment = "orgs" if owner_type == "organization" else "users"
+    return f"https://github.com/{segment}/{owner}/projects/{number}"
 
 
-def fetch_project(client, login, number, cfg):
+def project_reference(person, cfg):
+    owner_type = person.get("project_owner_type", "user")
+    owner = person.get("project_owner") or (cfg.get("github", {}).get("organization")
+        if owner_type == "organization" else person["github"])
+    return owner.lower(), owner_type, person.get("project_number")
+
+
+def person_project_url(person, cfg):
+    owner, owner_type, number = project_reference(person, cfg)
+    return personal_url(owner, number, owner_type)
+
+
+def saved_reference(state):
+    # Existing snapshots were always user-owned and keyed by the member's login.
+    return (state.owner or state.login).lower(), state.owner_type or "user", state.number
+
+
+def fetch_project(client, login, number, cfg, owner_type="user"):
     # Reuse the existing field pagination without changing its public result shape.
-    from .github import USER_PROJECT_FIELDS_QUERY
+    from .github import PROJECT_FIELDS_QUERY, USER_PROJECT_FIELDS_QUERY
+    root = "organization" if owner_type == "organization" else "user"
+    field_query = PROJECT_FIELDS_QUERY if owner_type == "organization" else USER_PROJECT_FIELDS_QUERY
+    item_query = ORGANIZATION_PERSONAL_QUERY if owner_type == "organization" else PERSONAL_QUERY
     fields, field_cursor = set(), None
     while True:
-        data = client.graphql(USER_PROJECT_FIELDS_QUERY, {"owner": login, "number": number, "cursor": field_cursor})
-        project = (data.get("user") or {}).get("projectV2")
+        data = client.graphql(field_query, {"owner": login, "number": number, "cursor": field_cursor})
+        project = (data.get(root) or {}).get("projectV2")
         if not project:
             raise GitHubError(f"Personal project #{number} is not accessible")
         connection = project["fields"]
@@ -71,9 +94,9 @@ def fetch_project(client, login, number, cfg):
         field_cursor = next_cursor
     rows, cursor, incomplete = {}, None, False
     while True:
-        data = client.graphql(PERSONAL_QUERY, {"owner": login, "number": number, "cursor": cursor,
+        data = client.graphql(item_query, {"owner": login, "number": number, "cursor": cursor,
             "status": cfg["workflow"]["status_field"], "priority": cfg["priority"]["field"]})
-        project = (data.get("user") or {}).get("projectV2")
+        project = (data.get(root) or {}).get("projectV2")
         if not project:
             raise GitHubError(f"Personal project #{number} is not accessible")
         for item in project["items"]["nodes"]:
@@ -113,18 +136,20 @@ def sync_projects(sessions, client, cfg):
         if number is None:
             continue
         login = person["github"].lower()
+        owner, owner_type, number = reference = project_reference(person, cfg)
         now = datetime.now(timezone.utc)
         try:
-            title, items, incomplete = fetch_project(client, login, number, cfg)
+            title, items, incomplete = fetch_project(client, owner, number, cfg, owner_type)
         except RateLimitError:
             raise
         except Exception as exc:
             with sessions() as session:
                 state = session.get(PersonalProject, login)
-                if not state or state.number != number:
+                if not state or saved_reference(state) != reference:
                     session.execute(delete(PersonalProjectItem).where(PersonalProjectItem.login == login))
                     state = state or PersonalProject(login=login, number=number)
                     state.number, state.title, state.last_success, state.incomplete = number, None, None, False
+                state.owner, state.owner_type = owner, owner_type
                 state.last_attempt, state.error = now, str(exc)
                 session.add(state)
                 session.commit()
@@ -132,7 +157,7 @@ def sync_projects(sessions, client, cfg):
         with sessions() as session:
             state = session.get(PersonalProject, login)
             previous = {item.item_id: item for item in session.scalars(select(PersonalProjectItem).where(
-                PersonalProjectItem.login == login))} if state and state.number == number else {}
+                PersonalProjectItem.login == login))} if state and saved_reference(state) == reference else {}
             replacements = []
             for item_id, payload in items.items():
                 old = previous.get(item_id)
@@ -161,6 +186,7 @@ def sync_projects(sessions, client, cfg):
             session.add_all(replacements)
             state = state or PersonalProject(login=login, number=number)
             state.number, state.title = number, title
+            state.owner, state.owner_type = owner, owner_type
             state.last_attempt = state.last_success = now
             required_fields = [cfg["workflow"]["status_field"]]
             if cfg["priority"]["source"] == "project" or any(item["content"]["__typename"] == "DraftIssue" for item in items.values()):
@@ -190,7 +216,7 @@ def item_view(login, number, person, payload, cfg, completed_at=None):
         identity=content["id"], personal_owners=[login], source=f"personal:{login}", is_draft=draft,
         repository_name=f"Personal · {person.get('name', login)}", full_name=(content.get("repository") or {}).get("nameWithOwner"),
         number=content.get("number"), title=content["title"], body=content.get("body"),
-        url=content.get("url") or personal_url(login, number),
+        url=content.get("url") or person_project_url(person, cfg),
         state=("closed" if workflow == cfg["workflow"]["values"]["done"] else "open") if draft else content["state"].lower(),
         author=(content.get("creator" if draft else "author") or {}).get("login"),
         actual_assignees=assignees, assignees=list(dict.fromkeys([*assignees, login])),
@@ -205,8 +231,8 @@ def item_view(login, number, person, payload, cfg, completed_at=None):
 
 
 def project_states(session, cfg):
-    configured = {p["github"].lower(): p["project_number"] for p in cfg["team"] if p.get("project_number") is not None}
-    return [state for state in session.scalars(select(PersonalProject)) if configured.get(state.login) == state.number]
+    configured = {p["github"].lower(): project_reference(p, cfg) for p in cfg["team"] if p.get("project_number") is not None}
+    return [state for state in session.scalars(select(PersonalProject)) if configured.get(state.login) == saved_reference(state)]
 
 
 def work_items(session, issues, repos, cfg):
