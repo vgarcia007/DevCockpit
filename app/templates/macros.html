@@ -2,7 +2,7 @@
 {% macro issue_line(issue) %}
 <a class="item-line scan-line" href="{{ issue.url }}" target="_blank" rel="noopener noreferrer" title="{{ issue.title }}">
   <span class="repo-tag" title="{{ issue.repository_name }}">{{ issue.repository_name }}</span>
-  <span class="item-number">{{ issue|task_reference }}</span><span class="item-title">{{ issue.title }}</span>
+  {% if issue|task_reference %}<span class="item-number">{{ issue|task_reference }}</span>{% endif %}<span class="item-title">{{ issue.title }}</span>
   {% if issue.priority_state == 'known' %}<span class="priority-label priority-{{ issue.priority|lower }}">{{ issue.priority }}</span>{% elif issue.priority_state == 'unavailable' %}<span class="priority-label is-muted" title="GitHub priority could not be read">Unavailable</span>{% endif %}
 </a>
 {% endmacro %}

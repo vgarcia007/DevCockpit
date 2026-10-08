@@ -170,6 +170,8 @@ def test_personal_tasks_render_and_filter_everywhere(tmp_path):
         assert response.status_code == 200, url
         assert "Personal task" in response.get_data(as_text=True), url
         assert "#None" not in response.get_data(as_text=True), url
+        assert "Draft" not in response.get_data(as_text=True), url
+        assert 'class="item-number"></span>' not in response.get_data(as_text=True), url
     assert "Personal task" in browser.get("/issues?member=alice").get_data(as_text=True)
     assert "Personal task" in browser.get("/issues?source=personal:alice").get_data(as_text=True)
     for query in ("unassigned=1", "repo=One", "source=repository", "state=closed"):

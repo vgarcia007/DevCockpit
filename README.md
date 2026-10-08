@@ -82,7 +82,7 @@ Tasks remain assigned to Philipp in DevCockpit, while the Project is read from `
 
 Personal Projects use the same configured Status options and Priority field as your other Projects. Their issues and Draft Issues appear in Overview, Brief, Now, Team, My work, Issues/Board, Search, and Statistics. Every task counts for the configured member, including drafts without an assignee; Issues has a source filter for personal Projects.
 
-Drafts display **Draft** and link to the GitHub Project. Moving a draft to the configured Done status completes it; moving it out of Done reopens it. Draft priorities always come from the Project field, even with `priority.source: issue_field`. Real issues retain their GitHub open/closed state. If an issue is already tracked through a configured repository, it appears once and its configured repository Project takes precedence for status and priority.
+Draft Issues appear like other issues, without a Draft label or an invented issue number, and link to the GitHub Project. Moving a draft to the configured Done status completes it; moving it out of Done reopens it. Draft priorities always come from the Project field, even with `priority.source: issue_field`. Real issues retain their GitHub open/closed state. If an issue is already tracked through a configured repository, it appears once and its configured repository Project takes precedence for status and priority.
 
 ## Optional OTRS tickets
 

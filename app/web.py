@@ -32,7 +32,7 @@ LOCAL_TZ = ZoneInfo("Europe/Berlin")
 
 
 def task_reference(item):
-    return "Draft" if getattr(item, "is_draft", False) else f"#{item.number}"
+    return "" if item.number is None else f"#{item.number}"
 
 
 def age_days(value):
