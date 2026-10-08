@@ -79,6 +79,8 @@ Conditional GitHub REST requests reuse cached responses when GitHub reports no c
 
 Syncs do not reload the page automatically. An **Updates available** hint lets you choose when to show the latest data, preserving the URL, filters, and scroll position. The hint indicates a newer sync snapshot, which may contain unchanged data. The notification bell and sidebar continue updating while you work.
 
+The top bar checks the branch that started Dev-Cockpit against its tracked remote every five minutes. If the local commit and remote branch commit differ, **Neue Version verfügbar** links to the repository. A checkout without a tracked branch, or a temporarily unreachable remote, keeps this hint hidden. The check does not fetch or modify the local checkout.
+
 ## Optional OTRS 5 tickets
 
 Uncomment the `otrs` example in `config.yml`, then set your HTTPS frontend URL and queue IDs. Enter and verify your agent login in **Settings → Accounts** after starting the app. The integration uses an agent session and the AgentTicketSearch CSV export, without saving a search profile.

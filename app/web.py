@@ -23,8 +23,10 @@ from .models import SecurityAlert
 from .models import ZabbixHost, ZabbixProblem, ZabbixSyncState
 from .zabbix import SEVERITIES, ZabbixSyncManager, ZabbixClient, ZabbixError, host_url, problem_duration, problem_url
 from .accounts import AccountStore, AccountError, account_binding
+from .update import GitUpdateChecker
 
 LOG = logging.getLogger(__name__)
+GIT_UPDATE_CHECKER = GitUpdateChecker(ROOT)
 PRIORITIES = ["Urgent", "High", "Medium", "Low"]
 LOCAL_TZ = ZoneInfo("Europe/Berlin")
 
@@ -1195,6 +1197,7 @@ def create_app(config_path=None, database_path=None, auto_sync=True, credential_
                         "zabbix_revision": zabbix_state.last_attempt.isoformat() if zabbix_state and zabbix_state.last_attempt else "",
                 "security_revision": security_revision.value if security_revision else "",
                         "zabbix_running": zabbix_manager.running if zabbix_manager else False,
+                        "app_update": GIT_UPDATE_CHECKER.check(),
                         "errors": errors})
 
     @app.get("/notifications")

@@ -123,6 +123,7 @@ Back up both account files together. If the key is lost or storage is damaged, r
 
 - Statistics defaults to configured repositories with Projects. Switch to **All configured repositories** to include those without a Project. Optional OTRS queues contribute separate ticket counts. Counts use the latest synced creation, closure, merge, and release dates.
 - GitHub syncs every 5 minutes by default. The sidebar shows the status and next sync for every enabled source; OTRS and Zabbix sync independently. New sync results show an **Updates available** hint. Choose **Show** to refresh the view while keeping its filters and scroll position.
+- Dev-Cockpit also checks the tracked branch of its own checkout against the configured Git remote every five minutes. When the commit differs, a small **Neue Version verfügbar** link appears in the top bar and opens the repository.
 - Need attention reflects the latest synced state: resolved conditions disappear after a successful sync and showing the updated view. Since your last visit is a separate history checklist; mark items done there without changing GitHub.
 - The notification bell reports observed GitHub changes and changes in configured OTRS attention queues. Browser alerts are optional and work while the tab is open.
 - DevCockpit has no user login and binds to localhost by default. Do not expose it without access control.

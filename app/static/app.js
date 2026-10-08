@@ -17,6 +17,8 @@ try {
 
 const syncLabel = document.getElementById('sync-label');
 if (syncLabel) {
+  const appUpdateNotice = document.getElementById('app-update-notice');
+  const appUpdateBranch = appUpdateNotice?.querySelector('.app-update-branch');
   const updateNotice = document.getElementById('view-update-notice');
   const updateButton = document.getElementById('view-update-button');
   const renderedGitHubSync = syncLabel.dataset.lastSuccess || '';
@@ -66,6 +68,15 @@ if (syncLabel) {
       serverOffsetMs = Date.parse(data.server_time) - Date.now();
       sources = data.sources;
       unavailable = false;
+      const appUpdate = data.app_update || {};
+      if (appUpdateNotice) {
+        appUpdateNotice.hidden = !appUpdate.available;
+        if (appUpdate.available) {
+          appUpdateNotice.href = appUpdate.url || '#';
+          appUpdateNotice.title = appUpdate.branch ? `Update für ${appUpdate.branch} verfügbar` : 'Update verfügbar';
+          if (appUpdateBranch) appUpdateBranch.textContent = appUpdate.branch ? `(${appUpdate.branch})` : '';
+        }
+      }
       if ((data.last_success || '') !== renderedGitHubSync ||
           (data.otrs_last_success || '') !== renderedOtrsSync ||
           (data.zabbix_revision || '') !== renderedZabbixRevision ||
