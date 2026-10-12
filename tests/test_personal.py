@@ -9,7 +9,7 @@ from sqlalchemy import select
 from app.config import load_config
 from app.github import GitHubError, RateLimitError
 from app.models import ExternalTeamIssue, Issue, ObservedChange, PersonalProject, PersonalProjectItem, Repository, make_session
-from app.personal import fetch_project, sync_projects, work_items, person_project_url, project_states
+from app.personal import as_date, fetch_project, sync_projects, work_items, person_project_url, project_states
 from app.web import create_app
 
 
@@ -154,6 +154,41 @@ def test_overlap_preserves_repository_and_fallback(tmp_path):
         cfg = deepcopy(CFG)
         cfg["repositories"][0]["project_number"] = None
         assert work_items(session, [issue], [repo], cfg)[0].workflow == "In Progress"
+
+
+@pytest.mark.parametrize("value", ["2026-10-12T08:00:00Z", "2026-10-12T10:00:00+02:00",
+                                       "2026-10-12T08:00:00"])
+def test_personal_dates_match_sqlite_utc_timestamps(value):
+    assert as_date(value) == datetime(2026, 10, 12, 8)
+    assert as_date(None) is None
+
+
+def test_issues_sort_repository_and_personal_timestamps(tmp_path):
+    path = tmp_path / "config.yml"
+    path.write_text(yaml.safe_dump(CFG))
+    db = tmp_path / "test.sqlite"
+    app = create_app(config_path=path, database_path=db, auto_sync=False)
+    app.testing = True
+    sessions = make_session(db)
+    payload = draft()
+    payload["content"]["createdAt"] = "2026-10-12T10:00:00+02:00"
+    payload["content"]["updatedAt"] = "2026-10-12T10:00:00+02:00"
+    payload["updatedAt"] = "2026-10-12T11:00:00+02:00"
+    sync_projects(sessions, Client([payload]), CFG)
+    with sessions() as session:
+        session.add(Issue(github_id=42, repository_name="One", number=42, title="Repository task",
+            url="https://github.com/acme/one/issues/42", state="open",
+            created_at=datetime(2026, 10, 12, 8, 30, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 10, 12, 8, 30, tzinfo=timezone.utc)))
+        session.commit()
+    browser = app.test_client()
+    for query, first, second in (("", "Personal task", "Repository task"),
+                                  ("?sort=updated", "Personal task", "Repository task"),
+                                  ("?sort=created", "Repository task", "Personal task")):
+        response = browser.get("/issues" + query)
+        assert response.status_code == 200
+        page = response.get_data(as_text=True)
+        assert page.index(first) < page.index(second)
 
 
 def test_personal_tasks_render_and_filter_everywhere(tmp_path):

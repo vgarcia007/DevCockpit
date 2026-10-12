@@ -47,7 +47,13 @@ ORGANIZATION_PERSONAL_QUERY = PERSONAL_QUERY.replace("user(login:$owner)", "orga
 
 
 def as_date(value):
-    return datetime.fromisoformat(value.replace("Z", "+00:00")) if value else None
+    if not value:
+        return None
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    # Match the naive UTC timestamps returned for repository issues by SQLite.
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
 
 
 def personal_url(owner, number, owner_type="user"):
